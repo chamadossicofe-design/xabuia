@@ -1,0 +1,172 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrapAdmin() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email == 'chamadossicofe@gmail.com';
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/usuarios/$(uid);
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(userPath(request.auth.uid));
+    }
+
+    function myProfile() {
+      return get(userPath(request.auth.uid)).data;
+    }
+
+    function isActive() {
+      return signedIn()
+        && (
+          isBootstrapAdmin()
+          || (hasProfile() && myProfile().ativo == true)
+        );
+    }
+
+    function isAdmin() {
+      return isActive()
+        && (
+          isBootstrapAdmin()
+          || (hasProfile() && myProfile().papel == 'admin')
+        );
+    }
+
+    function isOperator() {
+      return isActive() && hasProfile() && myProfile().papel == 'operador';
+    }
+
+    function isOperatorOrAdmin() {
+      return isActive() && (isAdmin() || isOperator());
+    }
+
+    function sameOrg(orgId) {
+      return hasProfile()
+        && myProfile().ativo == true
+        && myProfile().organizacaoId == orgId;
+    }
+
+    function ticketPath(chamadoId) {
+      return /databases/$(database)/documents/chamados/$(chamadoId);
+    }
+
+    function operatorCanReadTicket(data) {
+      return isOperator()
+        && (
+          data.status != 'em_tratamento'
+          || data.operadorTratamentoId == request.auth.uid
+        );
+    }
+
+    function canReadTicket(data) {
+      return isAdmin() || sameOrg(data.organizacaoId) || operatorCanReadTicket(data);
+    }
+
+    function validUserCreate(uid) {
+      return signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.ativo == true
+        && request.resource.data.papel == 'usuario'
+        && request.resource.data.keys().hasOnly([
+          'uid', 'nome', 'email', 'organizacaoId', 'organizacaoNome',
+          'papel', 'ativo', 'criadoEm', 'atualizadoEm'
+        ]);
+    }
+
+    function validBootstrapAdminCreate(uid) {
+      return isBootstrapAdmin()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.papel == 'admin'
+        && request.resource.data.ativo == true
+        && request.resource.data.keys().hasOnly([
+          'uid', 'nome', 'email', 'organizacaoId', 'organizacaoNome',
+          'papel', 'ativo', 'criadoEm', 'atualizadoEm'
+        ]);
+    }
+
+    match /usuarios/{uid} {
+      allow create: if validBootstrapAdminCreate(uid) || validUserCreate(uid);
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'atualizadoEm'])
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /organizacoes/{orgId} {
+      // Necessário para o primeiro cadastro: usuário logado precisa listar as organizações ativas antes de ter perfil.
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /chamados/{chamadoId} {
+      // get separado para permitir consultar a chave determinística antes de criar.
+      // Sem isso, getDoc() em um chamado ainda inexistente pode retornar permission-denied.
+      allow get: if isActive()
+        && (
+          !exists(ticketPath(chamadoId))
+          || canReadTicket(resource.data)
+        );
+
+      allow list: if isActive() && canReadTicket(resource.data);
+
+      allow create: if isActive()
+        && (isOperatorOrAdmin() || sameOrg(request.resource.data.organizacaoId))
+        && request.resource.data.criadoPor == request.auth.uid
+        && request.resource.data.status == 'aberto'
+        && request.resource.data.keys().hasOnly([
+          'chave', 'chaveBusca', 'organizacaoId', 'organizacaoNome',
+          'status', 'criadoPor', 'criadoPorNome', 'criadoPorEmail',
+          'criadoEm', 'atualizadoEm'
+        ]);
+
+      allow update: if isActive()
+        && canReadTicket(resource.data)
+        && (
+          isOperatorOrAdmin()
+          || (
+            sameOrg(resource.data.organizacaoId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'anexo', 'status', 'atualizadoEm',
+              'reabertoPor', 'reabertoPorNome', 'reabertoPorEmail', 'reabertoEm',
+              'operadorTratamentoId', 'operadorTratamentoNome', 'operadorTratamentoEmail', 'tratamentoIniciadoEm',
+              'finalizadoPor', 'finalizadoPorNome', 'finalizadoPorEmail', 'finalizadoEm'
+            ])
+          )
+        );
+
+      allow delete: if isAdmin();
+
+      match /historico/{historicoId} {
+        function parentTicket() {
+          return get(/databases/$(database)/documents/chamados/$(chamadoId)).data;
+        }
+
+        allow read: if isActive() && canReadTicket(parentTicket());
+
+        allow create: if isActive()
+          && canReadTicket(parentTicket())
+          && request.resource.data.usuarioId == request.auth.uid
+          && request.resource.data.keys().hasOnly([
+            'texto', 'tipo', 'usuarioId', 'usuarioNome', 'usuarioEmail', 'criadoEm', 'anexo'
+          ]);
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}

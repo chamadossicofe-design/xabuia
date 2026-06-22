@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chamados SICOFÊ</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="toast" class="toast hidden"></div>
+
+  <main id="authView" class="auth-shell hidden">
+    <section class="auth-card">
+      <div class="brand">
+        <div class="brand-mark">CS</div>
+        <div>
+          <h1>Chamados SICOFÊ</h1>
+          <p>Gerenciamento simples de chamados por organização.</p>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button id="tabLogin" class="tab active" type="button">Entrar</button>
+        <button id="tabRegister" class="tab" type="button">Criar conta</button>
+      </div>
+
+      <form id="authForm" class="stack">
+        <label id="nameField" class="field hidden">
+          <span>Usuário</span>
+          <input id="displayNameInput" autocomplete="name" placeholder="Ex.: Elias Cardoso" />
+        </label>
+
+        <label class="field">
+          <span>E-mail</span>
+          <input id="emailInput" type="email" autocomplete="email" placeholder="seu@email.com" required />
+        </label>
+
+        <label class="field">
+          <span>Senha</span>
+          <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Sua senha" required minlength="6" />
+        </label>
+
+        <button id="authSubmitBtn" class="btn primary" type="submit">Entrar</button>
+      </form>
+
+      <div class="divider"><span>ou</span></div>
+
+      <button id="googleBtn" class="btn google" type="button">
+        <span class="google-g">G</span> Entrar/Criar com Google
+      </button>
+
+      <button id="resetPasswordBtn" class="btn link-btn" type="button">Definir ou recuperar senha por e-mail</button>
+
+      <div id="connectionHelp" class="notice hidden"></div>
+
+      <p id="authHint" class="muted center">Ao criar conta, a organização será escolhida no primeiro acesso.</p>
+    </section>
+  </main>
+
+  <main id="onboardingView" class="auth-shell hidden">
+    <section class="auth-card">
+      <div class="brand">
+        <div class="brand-mark">CS</div>
+        <div>
+          <h1>Escolha sua organização</h1>
+          <p>Todo usuário comum vê apenas os chamados da própria organização.</p>
+        </div>
+      </div>
+
+      <form id="onboardingForm" class="stack">
+        <label class="field">
+          <span>Usuário</span>
+          <input id="onboardingNameInput" autocomplete="name" placeholder="Seu nome" required />
+        </label>
+
+        <label class="field">
+          <span>Organização</span>
+          <select id="onboardingOrgSelect" required></select>
+        </label>
+
+        <button class="btn primary" type="submit">Salvar e continuar</button>
+      </form>
+
+      <p id="onboardingEmpty" class="notice hidden">
+        Nenhuma organização cadastrada ainda. Entre primeiro com <strong>chamadossicofe@gmail.com</strong> para criar as organizações.
+      </p>
+
+      <button id="logoutOnboardingBtn" class="btn ghost" type="button">Sair</button>
+    </section>
+  </main>
+
+  <main id="blockedView" class="auth-shell hidden">
+    <section class="auth-card danger-card">
+      <h1>Acesso bloqueado</h1>
+      <p>Sua conta foi desativada por um administrador. Entre em contato com o responsável pela sua organização.</p>
+      <button id="logoutBlockedBtn" class="btn ghost" type="button">Sair</button>
+    </section>
+  </main>
+
+  <main id="appView" class="app hidden">
+    <header class="topbar">
+      <div class="brand inline">
+        <div class="brand-mark">CS</div>
+        <div>
+          <h1>Chamados SICOFÊ</h1>
+          <p id="userLine">—</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="newTicketBtn" class="btn primary" type="button">Novo chamado</button>
+        <button id="adminBtn" class="btn ghost hidden" type="button">Admin</button>
+        <button id="logoutBtn" class="btn ghost" type="button">Sair</button>
+      </div>
+    </header>
+
+    <section class="toolbar card">
+      <div class="field grow">
+        <span>Buscar por chave</span>
+        <input id="searchInput" placeholder="Digite parte da chave" />
+      </div>
+      <label class="field compact">
+        <span>Status</span>
+        <select id="statusFilter">
+          <option value="ativos" selected>Ativos: aberto, reaberto e em tratamento</option>
+          <option value="todos">Todos</option>
+          <option value="aberto">Aberto</option>
+          <option value="reaberto">Reaberto</option>
+          <option value="em_tratamento">Em tratamento</option>
+          <option value="finalizado">Finalizado</option>
+        </select>
+      </label>
+      <label id="orgFilterWrap" class="field compact hidden">
+        <span>Organização</span>
+        <select id="orgFilter"></select>
+      </label>
+    </section>
+
+    <section class="summary-grid">
+      <article class="metric card"><span>Abertos</span><strong id="countAberto">0</strong></article>
+      <article class="metric card"><span>Reabertos</span><strong id="countReaberto">0</strong></article>
+      <article class="metric card"><span>Em tratamento</span><strong id="countTratamento">0</strong></article>
+      <article class="metric card"><span>Finalizados</span><strong id="countFinalizado">0</strong></article>
+      <article class="metric card"><span>Total visível</span><strong id="countTotal">0</strong></article>
+    </section>
+
+    <section class="content-grid">
+      <section class="card ticket-list-card">
+        <div class="section-head">
+          <h2>Chamados</h2>
+          <span id="liveStatus" class="pill">Carregando...</span>
+        </div>
+        <div id="ticketList" class="ticket-list"></div>
+      </section>
+
+      <aside id="ticketDetail" class="card detail-card empty">
+        <h2>Selecione um chamado</h2>
+        <p class="muted">Clique em um chamado para ver o histórico e adicionar novas observações.</p>
+      </aside>
+    </section>
+  </main>
+
+  <dialog id="ticketDialog" class="modal">
+    <form id="ticketForm" method="dialog" class="modal-card">
+      <div class="section-head">
+        <h2>Novo chamado</h2>
+        <button class="icon-btn" value="cancel" type="button" data-close-dialog="ticketDialog">×</button>
+      </div>
+
+      <label class="field">
+        <span>Chave</span>
+        <input id="ticketKeyInput" required placeholder="Ex.: NF, chave de acesso, protocolo..." />
+      </label>
+
+      <label id="ticketOrgWrap" class="field hidden">
+        <span>Organização</span>
+        <select id="ticketOrgSelect"></select>
+      </label>
+
+      <label class="field">
+        <span>Observação inicial</span>
+        <textarea id="ticketObsInput" rows="5" required placeholder="Descreva a ocorrência inicial"></textarea>
+      </label>
+
+      <div class="field">
+        <span>Anexo</span>
+        <input id="ticketFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx" />
+        <div id="ticketPasteZone" class="paste-zone" tabindex="0" role="button" aria-label="Adicionar anexo">
+          <div class="paste-empty">
+            <strong>Cole uma imagem aqui com Ctrl+V</strong>
+            <small>Também pode clicar para escolher arquivo ou arrastar uma imagem para esta área.</small>
+          </div>
+          <div id="ticketPastePreview" class="paste-preview hidden"></div>
+        </div>
+        <button id="clearTicketFileBtn" class="btn ghost hidden" type="button">Remover anexo</button>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn ghost" value="cancel" type="button" data-close-dialog="ticketDialog">Cancelar</button>
+        <button id="saveTicketBtn" class="btn primary" type="submit">Salvar chamado</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="adminDialog" class="modal wide">
+    <div class="modal-card">
+      <div class="section-head">
+        <h2>Administração</h2>
+        <button class="icon-btn" type="button" data-close-dialog="adminDialog">×</button>
+      </div>
+
+      <div class="admin-grid">
+        <section>
+          <h3>Organizações</h3>
+          <form id="orgForm" class="row-form">
+            <input id="orgNameInput" placeholder="Nova organização" required />
+            <button class="btn primary" type="submit">Criar</button>
+          </form>
+          <div id="orgAdminList" class="mini-list"></div>
+        </section>
+
+        <section>
+          <h3>Usuários</h3>
+          <div id="usersAdminList" class="mini-list"></div>
+        </section>
+
+        <section class="report-section">
+          <h3>Relatório dos operadores</h3>
+          <p class="muted">Veja quantos chamados cada operador colocou em tratamento, finalizou ou reabriu no intervalo informado.</p>
+          <div class="report-filters">
+            <label class="field">
+              <span>Data inicial</span>
+              <input id="operatorReportStart" type="date" />
+            </label>
+            <label class="field">
+              <span>Data final</span>
+              <input id="operatorReportEnd" type="date" />
+            </label>
+            <button id="operatorReportBtn" class="btn primary" type="button">Gerar relatório</button>
+          </div>
+          <div id="operatorReportBox" class="report-box empty-state">Informe o período e clique em Gerar relatório.</div>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
