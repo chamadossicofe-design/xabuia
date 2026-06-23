@@ -44,22 +44,20 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V12';
+const APP_VERSION = 'V14';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
   nf_caminhao_porta: 'Nota fiscal • Caminhão na porta',
   nf_adiantamento: 'Nota fiscal • Adiantamento',
-  nota_fiscal: 'Nota fiscal',
   reativacao_produtos: 'Reativação de produtos',
   novos_produtos: 'Novos produtos',
   pedido_em_andamento: 'Pedido em andamento',
-  divergencia_flow: 'Divergência no Flow',
-  outras: 'Outras'
+  divergencia_flow: 'Divergência no Flow'
 };
 
 const TICKET_GROUPS = {
-  nota_fiscal: ['nf_caminhao_porta', 'nf_adiantamento', 'nota_fiscal'],
+  nota_fiscal: ['nf_caminhao_porta', 'nf_adiantamento'],
   produtos: ['reativacao_produtos', 'novos_produtos', 'pedido_em_andamento', 'divergencia_flow']
 };
 
@@ -168,7 +166,6 @@ const els = {
   chooseNewProductBtn: $('chooseNewProductBtn'),
   choosePedidoAndamentoBtn: $('choosePedidoAndamentoBtn'),
   chooseDivergenciaFlowBtn: $('chooseDivergenciaFlowBtn'),
-  chooseOtherTicketBtn: $('chooseOtherTicketBtn'),
   ticketDialog: $('ticketDialog'),
   ticketForm: $('ticketForm'),
   ticketDialogTitle: $('ticketDialogTitle'),
@@ -200,8 +197,6 @@ const els = {
   productPastePreview: $('productPastePreview'),
   clearProductFileBtn: $('clearProductFileBtn'),
   saveProductTicketBtn: $('saveProductTicketBtn'),
-  otherTicketDialog: $('otherTicketDialog'),
-  otherTicketForm: $('otherTicketForm'),
   adminDialog: $('adminDialog'),
   orgForm: $('orgForm'),
   orgNameInput: $('orgNameInput'),
@@ -2176,16 +2171,6 @@ els.chooseProductReactivationBtn?.addEventListener('click', () => openProductFor
 els.chooseNewProductBtn?.addEventListener('click', () => openProductForm('novos_produtos'));
 els.choosePedidoAndamentoBtn?.addEventListener('click', () => openProductForm('pedido_em_andamento'));
 els.chooseDivergenciaFlowBtn?.addEventListener('click', () => openProductForm('divergencia_flow'));
-
-els.chooseOtherTicketBtn?.addEventListener('click', () => {
-  els.ticketTypeDialog.close();
-  els.otherTicketDialog?.showModal();
-});
-
-els.otherTicketForm?.addEventListener('submit', (event) => {
-  event.preventDefault();
-  showToast('O formulário Outras ainda está em construção.', 'error');
-});
 
 els.ticketForm.addEventListener('submit', createTicket);
 els.productTicketForm?.addEventListener('submit', createProductTicket);

@@ -141,12 +141,10 @@
             <label><input type="checkbox" value="todos" data-filter-option checked /> Todos</label>
             <label><input type="checkbox" value="nf_caminhao_porta" data-filter-option /> NF • Caminhão na porta</label>
             <label><input type="checkbox" value="nf_adiantamento" data-filter-option /> NF • Adiantamento</label>
-            <label><input type="checkbox" value="nota_fiscal" data-filter-option /> NF • Antigo</label>
             <label><input type="checkbox" value="reativacao_produtos" data-filter-option /> Reativação de produtos</label>
             <label><input type="checkbox" value="novos_produtos" data-filter-option /> Novos produtos</label>
             <label><input type="checkbox" value="pedido_em_andamento" data-filter-option /> Pedido em andamento</label>
             <label><input type="checkbox" value="divergencia_flow" data-filter-option /> Divergência no Flow</label>
-            <label><input type="checkbox" value="outras" data-filter-option /> Outras</label>
           </div>
         </details>
       </div>
@@ -259,15 +257,6 @@
           </div>
         </section>
 
-        <section class="ticket-type-section muted-section">
-          <h3>Outras</h3>
-          <div class="ticket-type-grid">
-            <button id="chooseOtherTicketBtn" class="ticket-type-card disabled-look" type="button" data-ticket-type="outras">
-              <strong>Outras</strong>
-              <span>Modelo em construção para outros tipos de solicitação.</span>
-            </button>
-          </div>
-        </section>
       </div>
 
       <div class="modal-actions">
@@ -370,22 +359,6 @@
       <div class="modal-actions">
         <button class="btn ghost" value="cancel" type="button" data-close-dialog="productTicketDialog">Cancelar</button>
         <button id="saveProductTicketBtn" class="btn primary" type="submit">Salvar chamado</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="otherTicketDialog" class="modal">
-    <form id="otherTicketForm" method="dialog" class="modal-card">
-      <div class="section-head">
-        <h2>Novo chamado • Outras</h2>
-        <button class="icon-btn" value="cancel" type="button" data-close-dialog="otherTicketDialog">×</button>
-      </div>
-
-      <div class="notice">Este modelo ainda está em construção. Vamos definir os campos desse tipo depois.</div>
-
-      <div class="modal-actions">
-        <button class="btn ghost" value="cancel" type="button" data-close-dialog="otherTicketDialog">Fechar</button>
-        <button class="btn primary" type="submit" disabled>Salvar chamado</button>
       </div>
     </form>
   </dialog>
