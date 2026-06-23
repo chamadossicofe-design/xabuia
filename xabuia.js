@@ -9,8 +9,8 @@
 // @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
 // @homepageURL  https://chamadossicofe-design.github.io/xabuia/
 // @supportURL   https://github.com/chamadossicofe-design/xabuia/issues
-// @updateURL    https://raw.githubusercontent.com/chamadossicofe-design/xabuia/main/xabuia.js
-// @downloadURL  https://raw.githubusercontent.com/chamadossicofe-design/xabuia/main/xabuia.js
+// @updateURL    https://chamadossicofe-design.github.io/xabuia/xabuia.js
+// @downloadURL  https://chamadossicofe-design.github.io/xabuia/xabuia.js
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
