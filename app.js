@@ -44,7 +44,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V14';
+const APP_VERSION = 'V15';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -1049,7 +1049,6 @@ async function renderTicketDetail(ticket) {
   if (isOperatorOrAdmin()) {
     const select = $('detailStatusSelect');
     select.value = ticket.status || 'aberto';
-    select.addEventListener('change', () => updateTicketStatus(ticket, select.value));
   }
 
   const reopenButton = $('reopenTicketBtn');
@@ -1057,7 +1056,7 @@ async function renderTicketDetail(ticket) {
 
   clearHistoryAttachment();
   setupHistoryPasteZone();
-  $('addHistoryBtn').addEventListener('click', () => addHistory(ticket.id));
+  $('addHistoryBtn').addEventListener('click', () => addHistory(ticket));
   await loadHistory(ticket.id);
 }
 
@@ -1088,34 +1087,80 @@ async function loadHistory(ticketId) {
   `).join('');
 }
 
-async function addHistory(ticketId) {
+function historyTypeForStatusChange(status) {
+  if (status === 'reaberto') return 'reabertura';
+  if (status === 'informacoes_divergentes') return 'informacoes_divergentes';
+  if (status === 'devolver_recusar') return 'devolver_recusar';
+  return 'status';
+}
+
+async function addHistory(ticket) {
+  const ticketId = typeof ticket === 'string' ? ticket : ticket?.id;
+  const currentStatus = (typeof ticket === 'object' && ticket?.status) ? ticket.status : 'aberto';
+  const selectedStatus = $('detailStatusSelect')?.value || currentStatus;
+  const statusChanged = isOperatorOrAdmin() && selectedStatus !== currentStatus;
+
   const textarea = $('newHistoryText');
   const texto = normalizeKey(textarea.value);
   const file = state.pendingHistoryFile || $('historyFileInput')?.files?.[0] || null;
-  if (!texto && !file) return showToast('Digite a ocorrência ou anexe um arquivo antes de adicionar.', 'error');
 
-  const { anexo, warning } = await tryUploadTicketFile(ticketId, file);
-  const textoFinal = texto || `Anexo enviado: ${file?.name || 'imagem-colada.png'}`;
+  if (!ticketId) return showToast('Chamado inválido.', 'error');
 
-  await addDoc(collection(db, 'chamados', ticketId, 'historico'), {
-    texto: textoFinal,
-    tipo: 'observacao',
-    usuarioId: state.user.uid,
-    usuarioNome: selectedUserName(),
-    usuarioEmail: state.user.email,
-    criadoEm: serverTimestamp(),
-    ...(anexo ? { anexo } : {})
-  });
+  if (!texto && !file && !statusChanged) {
+    return showToast('Digite a ocorrência ou anexe um arquivo antes de adicionar.', 'error');
+  }
 
-  await updateDoc(doc(db, 'chamados', ticketId), {
-    atualizadoEm: serverTimestamp(),
-    ...(anexo ? { anexo } : {})
-  });
+  if (statusChanged && !texto && !file) {
+    textarea.focus();
+    return showToast('Digite uma ocorrência explicando a alteração de status.', 'error');
+  }
 
-  textarea.value = '';
-  clearHistoryAttachment();
-  await loadHistory(ticketId);
-  showToast(warning || 'Ocorrência adicionada.', warning ? 'error' : 'success');
+  const addButton = $('addHistoryBtn');
+  if (addButton) {
+    addButton.disabled = true;
+    addButton.textContent = 'Salvando...';
+  }
+
+  try {
+    const { anexo, warning } = await tryUploadTicketFile(ticketId, file);
+    const textoFinal = texto || `Anexo enviado: ${file?.name || 'imagem-colada.png'}`;
+    const historyType = statusChanged ? historyTypeForStatusChange(selectedStatus) : 'observacao';
+
+    const updatePayload = {
+      atualizadoEm: serverTimestamp(),
+      ...(statusChanged ? ticketStatusPayload(selectedStatus) : {}),
+      ...(anexo ? { anexo } : {})
+    };
+
+    await updateDoc(doc(db, 'chamados', ticketId), updatePayload);
+
+    await addDoc(collection(db, 'chamados', ticketId, 'historico'), {
+      texto: textoFinal,
+      tipo: historyType,
+      usuarioId: state.user.uid,
+      usuarioNome: selectedUserName(),
+      usuarioEmail: state.user.email,
+      criadoEm: serverTimestamp(),
+      ...(anexo ? { anexo } : {})
+    });
+
+    textarea.value = '';
+    clearHistoryAttachment();
+    await loadHistory(ticketId);
+
+    if (statusChanged) {
+      showToast(warning || `Status e ocorrência salvos: ${STATUS_LABELS[selectedStatus]}.`, warning ? 'error' : 'success');
+    } else {
+      showToast(warning || 'Ocorrência adicionada.', warning ? 'error' : 'success');
+    }
+  } catch (error) {
+    showToast(`Erro ao salvar ocorrência: ${error.message}`, 'error');
+  } finally {
+    if (addButton) {
+      addButton.disabled = false;
+      addButton.textContent = 'Adicionar';
+    }
+  }
 }
 
 async function addSystemHistory(ticketId, texto, tipo = 'status', extra = {}) {
