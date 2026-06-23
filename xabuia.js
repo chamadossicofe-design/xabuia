@@ -1,12 +1,16 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firebase direto
 // @namespace    xabuia/infradesk
-// @version      4.0.0
+// @version      1.0.0
 // @description  Abre/atualiza chamados Xabuia direto do card do Infradesk, sem seleção manual de status; reabre somente chamados encerrados.
 // @author       Xabuia
 // @match        https://asp.infradesk.app/backend/chamados/painel*
 // @match        https://asp.infradesk.app/backend/chamados*
 // @run-at       document-end
+// @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
+// @homepageURL  https://chamadossicofe-design.github.io/xabuia/
+// @updateURL    https://chamadossicofe-design.github.io/xabuia/xabuia.js
+// @downloadURL  https://chamadossicofe-design.github.io/xabuia/xabuia.js
 // @grant        none
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
@@ -19,7 +23,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = '4.0.0';
+  const XABUIA_VERSION = '7.0.0';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
@@ -66,6 +70,12 @@
     state.authReady = true;
     state.user = user || null;
     state.profile = null;
+
+    // Importante: no primeiro carregamento da página o scanCards() roda antes do Firebase
+    // terminar o login. A V5 marcava o card como pronto e depois não voltava para assinar
+    // o Firestore. Limpamos as assinaturas aqui para assinar de novo assim que o perfil existir.
+    clearCardSubscriptions();
+    if (!user) clearAllCardBoxes();
 
     if (user) {
       try {
@@ -206,6 +216,20 @@
     return db.collection('chamados').doc(ticketDocId(state.profile.organizacaoId, chaveBusca));
   }
 
+  function clearCardSubscriptions() {
+    state.cardUnsubs.forEach((unsub) => {
+      try { unsub(); } catch (_) {}
+    });
+    state.cardUnsubs.clear();
+    $$('.chamado-item[data-chamado-id]').forEach((card) => {
+      delete card.dataset.xabuiaObserved;
+    });
+  }
+
+  function clearAllCardBoxes() {
+    $$('.xabuia-box').forEach((box) => box.remove());
+  }
+
   /********************************************************************
    * ESTILO E UI
    ********************************************************************/
@@ -243,22 +267,39 @@
       }
       .xabuia-box {
         clear: both;
-        margin: 8px 0 10px;
-        padding: 8px 9px;
-        border: 1px solid #c7d2fe;
-        background: #eef2ff;
-        border-radius: 8px;
-        color: #1e293b;
+        margin: 9px 0 10px;
+        padding: 0;
+        border: 1px solid rgba(21, 94, 239, .18);
+        background: #ffffff;
+        border-radius: 12px;
+        color: #172033;
         font-size: 12px;
         line-height: 1.35;
+        overflow: hidden;
+        box-shadow: 0 10px 22px rgba(15, 23, 42, .10);
       }
       .xabuia-box-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        font-weight: 800;
-        margin-bottom: 3px;
+        padding: 7px 9px;
+        font-weight: 900;
+        color: #fff;
+        background: linear-gradient(135deg, #155eef, #7c3aed);
+      }
+      .xabuia-box-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      .xabuia-box-title img {
+        width: 18px;
+        height: 18px;
+        border-radius: 5px;
+        flex: 0 0 auto;
+        box-shadow: 0 2px 8px rgba(255,255,255,.22);
       }
       .xabuia-chip {
         display: inline-flex;
@@ -267,17 +308,39 @@
         padding: 2px 7px;
         font-size: 10px;
         font-weight: 900;
-        background: #fff;
+        background: rgba(255,255,255,.96);
         color: #1d4ed8;
-        border: 1px solid #bfdbfe;
+        border: 1px solid rgba(255,255,255,.65);
         white-space: nowrap;
       }
-      .xabuia-chip.aberto { color: #0f48ba; background: #eff6ff; }
-      .xabuia-chip.reaberto { color: #92400e; background: #fef3c7; border-color: #fde68a; }
-      .xabuia-chip.em_tratamento { color: #b54708; background: #fff7ed; border-color: #fed7aa; }
-      .xabuia-chip.finalizado { color: #067647; background: #ecfdf3; border-color: #bbf7d0; }
-      .xabuia-chip.informacoes_divergentes, .xabuia-chip.devolver_recusar { color: #b42318; background: #fef3f2; border-color: #fecdca; }
-      .xabuia-box small { color: #64748b; }
+      .xabuia-box-body {
+        padding: 8px 9px 9px;
+        background: #f8fafc;
+        border-left: 4px solid #155eef;
+      }
+      .xabuia-box-body strong { color: #0f172a; }
+      .xabuia-last-text {
+        margin-top: 3px;
+        padding: 6px 7px;
+        border-radius: 9px;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        color: #334155;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      .xabuia-box small { color: #64748b; display:block; margin-top: 5px; }
+      .xabuia-box.xabuia-status-aberto .xabuia-box-body { border-left-color: #155eef; background: #eff6ff; }
+      .xabuia-box.xabuia-status-reaberto .xabuia-box-head { background: linear-gradient(135deg, #f59e0b, #ea580c); }
+      .xabuia-box.xabuia-status-reaberto .xabuia-box-body { border-left-color: #f59e0b; background: #fffbeb; }
+      .xabuia-box.xabuia-status-em_tratamento .xabuia-box-head { background: linear-gradient(135deg, #b54708, #f97316); }
+      .xabuia-box.xabuia-status-em_tratamento .xabuia-box-body { border-left-color: #f97316; background: #fff7ed; }
+      .xabuia-box.xabuia-status-finalizado .xabuia-box-head { background: linear-gradient(135deg, #067647, #12b76a); }
+      .xabuia-box.xabuia-status-finalizado .xabuia-box-body { border-left-color: #12b76a; background: #ecfdf3; }
+      .xabuia-box.xabuia-status-informacoes_divergentes .xabuia-box-head,
+      .xabuia-box.xabuia-status-devolver_recusar .xabuia-box-head { background: linear-gradient(135deg, #b42318, #ef4444); }
+      .xabuia-box.xabuia-status-informacoes_divergentes .xabuia-box-body,
+      .xabuia-box.xabuia-status-devolver_recusar .xabuia-box-body { border-left-color: #ef4444; background: #fef3f2; }
       .xabuia-overlay {
         position: fixed;
         inset: 0;
@@ -515,10 +578,16 @@
     ensureModal();
 
     $$('.chamado-item[data-chamado-id]').forEach((card) => {
-      if (!card || card.dataset.xabuiaReady === '1') return;
-      card.dataset.xabuiaReady = '1';
-      addXabuiaButton(card);
-      ensureCardBox(card);
+      if (!card) return;
+
+      if (card.dataset.xabuiaButtonReady !== '1') {
+        card.dataset.xabuiaButtonReady = '1';
+        addXabuiaButton(card);
+      }
+
+      // Mesmo que o botão já exista, tenta assinar o Firestore quando o login/perfil ficar pronto.
+      // Isso garante que, ao recarregar a página, o bloco colorido volte a aparecer nos cards
+      // que já possuem Xabuia aberta.
       observeCardXabuiaStatus(card);
     });
   }
@@ -545,19 +614,17 @@
     }
   }
 
+  function removeCardBox(card) {
+    const box = $('.xabuia-box', card);
+    if (box) box.remove();
+  }
+
   function ensureCardBox(card) {
     let box = $('.xabuia-box', card);
     if (box) return box;
 
     box = document.createElement('div');
     box.className = 'xabuia-box';
-    box.innerHTML = `
-      <div class="xabuia-box-head">
-        <span>Xabuia</span>
-        <span class="xabuia-chip">Sem chamado</span>
-      </div>
-      <div class="xabuia-box-body"><small>Aguardando abertura.</small></div>
-    `;
 
     const tags = $('.chamado-tags', card);
     if (tags?.parentElement) {
@@ -569,42 +636,44 @@
     return box;
   }
 
-  function renderCardBox(card, ticket = null, history = null, loading = false) {
-    const box = ensureCardBox(card);
-    if (loading) {
-      box.innerHTML = `
-        <div class="xabuia-box-head">
-          <span>Xabuia</span>
-          <span class="xabuia-chip">Consultando...</span>
-        </div>
-        <div class="xabuia-box-body"><small>Buscando status no Firebase.</small></div>
-      `;
-      return;
-    }
+  function historyText(history) {
+    return normalizeText(
+      history?.texto
+      || history?.comentario
+      || history?.observacao
+      || history?.descricao
+      || ''
+    );
+  }
 
+  function renderCardBox(card, ticket = null, history = null) {
+    // Não mostra bloco "Sem chamado". O painel Xabuia só aparece quando a NF já tem Xabuia aberta.
     if (!ticket) {
-      box.innerHTML = `
-        <div class="xabuia-box-head">
-          <span>Xabuia</span>
-          <span class="xabuia-chip">Sem chamado</span>
-        </div>
-        <div class="xabuia-box-body"><small>Aguardando abertura.</small></div>
-      `;
+      removeCardBox(card);
       return;
     }
 
+    const box = ensureCardBox(card);
     const status = ticket.status || 'aberto';
     const label = STATUS_LABELS[status] || status;
-    const histText = history?.texto ? escapeHtml(history.texto) : 'Sem histórico.';
-    const histUser = history?.usuarioNome || history?.usuarioEmail || '';
-    const histDate = formatDate(history?.criadoEm || ticket.atualizadoEm);
+
+    // V7: mantém a última ocorrência carregada. Na V6, quando o snapshot do chamado atualizava,
+    // ele redesenhava o card sem o histórico e podia trocar o texto por "Chamado aberto...".
+    const textFromHistory = historyText(history);
+    const textFromTicket = normalizeText(ticket.ultimaOcorrenciaTexto || ticket.ultimoComentario || ticket.ultimaObservacao || '');
+    const histText = escapeHtml(textFromHistory || textFromTicket || 'Carregando última ocorrência...');
+    const histUser = history?.usuarioNome || history?.usuarioEmail || ticket.ultimaOcorrenciaUsuarioNome || ticket.ultimaOcorrenciaUsuarioEmail || '';
+    const histDate = formatDate(history?.criadoEm || ticket.ultimaOcorrenciaEm || ticket.atualizadoEm);
+
+    box.className = `xabuia-box xabuia-status-${String(status).replace(/[^a-z0-9_-]/gi, '_')}`;
     box.innerHTML = `
       <div class="xabuia-box-head">
-        <span>Xabuia</span>
+        <span class="xabuia-box-title"><img src="${XABUIA_ICON_URL}" alt=""> Xabuia</span>
         <span class="xabuia-chip ${escapeHtml(status)}">${escapeHtml(label)}</span>
       </div>
       <div class="xabuia-box-body">
-        <div><strong>Última ocorrência:</strong> ${histText}</div>
+        <div><strong>Última ocorrência</strong></div>
+        <div class="xabuia-last-text">${histText}</div>
         <small>${escapeHtml(histDate)}${histUser ? ' • ' : ''}${escapeHtml(histUser)}</small>
       </div>
     `;
@@ -612,54 +681,53 @@
 
   function observeCardXabuiaStatus(card) {
     if (!canOpenFromInfradesk()) return;
+    if (card.dataset.xabuiaObserved === '1') return;
+
     const data = parseCard(card);
     if (!data.chave || data.chave.length !== 44) return;
-    const key = `${card.getAttribute('data-chamado-id')}|${data.chave}`;
-    if (state.cardUnsubs.has(key)) return;
 
     const ref = ticketRefForKey(data.chave);
     if (!ref) return;
 
-    renderCardBox(card, null, null, true);
+    card.dataset.xabuiaObserved = '1';
+    const key = `${state.profile.organizacaoId}|${card.getAttribute('data-chamado-id')}|${data.chave}|${Date.now()}|${Math.random().toString(36).slice(2)}`;
+
     let lastTicket = null;
+    let lastHistory = null;
     let unsubHistory = null;
 
     const unsubTicket = ref.onSnapshot((snap) => {
       if (!snap.exists) {
         lastTicket = null;
+        lastHistory = null;
         if (unsubHistory) {
           unsubHistory();
           unsubHistory = null;
         }
-        renderCardBox(card, null);
+        removeCardBox(card);
         return;
       }
 
       lastTicket = { id: snap.id, ...snap.data() };
-      renderCardBox(card, lastTicket, null);
+      renderCardBox(card, lastTicket, lastHistory);
 
       if (!unsubHistory) {
         unsubHistory = ref.collection('historico')
           .orderBy('criadoEm', 'desc')
           .limit(1)
           .onSnapshot((historySnap) => {
-            const item = historySnap.docs[0]?.data() || null;
-            renderCardBox(card, lastTicket, item);
+            lastHistory = historySnap.docs[0]?.data() || null;
+            renderCardBox(card, lastTicket, lastHistory);
           }, (error) => {
             console.warn('[Xabuia] Erro ao ler histórico:', error);
-            renderCardBox(card, lastTicket, null);
+            renderCardBox(card, lastTicket, lastHistory);
           });
       }
     }, (error) => {
       console.warn('[Xabuia] Erro ao ler chamado:', error);
-      const box = ensureCardBox(card);
-      box.innerHTML = `
-        <div class="xabuia-box-head">
-          <span>Xabuia</span>
-          <span class="xabuia-chip">Erro</span>
-        </div>
-        <div class="xabuia-box-body"><small>${escapeHtml(error.message || 'Erro ao consultar Firebase.')}</small></div>
-      `;
+      // Para não poluir os cards, não mostramos bloco de erro quando não existe Xabuia carregada.
+      // O erro continua no console para diagnóstico. Permite nova tentativa em um próximo scan.
+      delete card.dataset.xabuiaObserved;
     });
 
     state.cardUnsubs.set(key, () => {
