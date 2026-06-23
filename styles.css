@@ -148,7 +148,7 @@ button { cursor: pointer; }
   margin-bottom: 18px;
 }
 .top-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.card { padding: 18px; }
+.card { padding: 6px; }
 .admin-home { margin-bottom: 16px; }
 .compact-list { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 
@@ -160,7 +160,7 @@ button { cursor: pointer; }
 }
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   gap: 14px;
   margin-bottom: 16px;
 }
