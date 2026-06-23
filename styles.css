@@ -418,18 +418,94 @@ button { cursor: pointer; }
   min-width: min(420px, 100%);
 }
 
-.multi-field {
+.dropdown-field {
   min-width: 230px;
+  position: relative;
 }
 
-.multi-select {
-  min-height: 118px;
-  padding: 8px 10px !important;
+.multi-dropdown {
+  position: relative;
+  width: 100%;
 }
 
-.multi-select option {
-  padding: 6px 8px;
-  border-radius: 8px;
+.multi-dropdown summary {
+  list-style: none;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 40px 11px 12px;
+  background: #fff;
+  color: var(--text);
+  outline: none;
+  min-height: 44px;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+
+.multi-dropdown summary::-webkit-details-marker { display: none; }
+
+.multi-dropdown summary::after {
+  content: "▾";
+  position: absolute;
+  right: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: .9rem;
+}
+
+.multi-dropdown[open] summary {
+  border-color: rgba(21, 94, 239, .55);
+  box-shadow: 0 0 0 4px rgba(21, 94, 239, .12);
+}
+
+.multi-dropdown[open] summary::after {
+  content: "▴";
+}
+
+.multi-dropdown-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-dropdown-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(320px, calc(100vw - 48px));
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.multi-dropdown-menu label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.multi-dropdown-menu label:hover {
+  background: #f1f5f9;
+}
+
+.multi-dropdown-menu input {
+  width: auto;
+  min-width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
 }
 
 .field-help {
@@ -656,9 +732,13 @@ button { cursor: pointer; }
     grid-template-columns: 1fr;
   }
 
-  .multi-field,
+  .dropdown-field,
   .field.compact {
     min-width: 100%;
+  }
+
+  .multi-dropdown-menu {
+    width: 100%;
   }
 
   .occurrence-toolbar {

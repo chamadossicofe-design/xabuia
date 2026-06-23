@@ -449,18 +449,90 @@ function escapeHtml(value) {
 }
 
 
-function selectedValues(select, allValue = 'todos') {
-  if (!select) return [allValue];
-  if (!select.multiple) return [select.value || allValue];
-  const values = [...select.selectedOptions].map((opt) => opt.value).filter(Boolean);
+function isMultiDropdown(control) {
+  return !!control?.classList?.contains('multi-dropdown');
+}
+
+function filterCheckboxes(control) {
+  return [...(control?.querySelectorAll?.('input[data-filter-option]') || [])];
+}
+
+function selectedValues(control, allValue = 'todos') {
+  if (!control) return [allValue];
+
+  if (isMultiDropdown(control)) {
+    const values = filterCheckboxes(control)
+      .filter((input) => input.checked)
+      .map((input) => input.value)
+      .filter(Boolean);
+    return values.length ? values : [allValue];
+  }
+
+  if (!control.multiple) return [control.value || allValue];
+
+  const values = [...control.selectedOptions].map((opt) => opt.value).filter(Boolean);
   return values.length ? values : [allValue];
 }
 
+function updateMultiDropdownLabel(control, allValue) {
+  if (!isMultiDropdown(control)) return;
 
-function normalizeMultiSelect(select, allValue) {
-  if (!select || !select.multiple) return;
-  const selected = [...select.selectedOptions].map((opt) => opt.value);
-  const allOption = [...select.options].find((opt) => opt.value === allValue);
+  const label = control.querySelector('.multi-dropdown-label');
+  if (!label) return;
+
+  const allLabel = control.dataset.labelAll || 'Todos';
+  const singular = control.dataset.labelSingular || 'item';
+  const plural = control.dataset.labelPlural || 'itens';
+  const values = selectedValues(control, allValue);
+
+  if (values.includes(allValue)) {
+    label.textContent = allLabel;
+    return;
+  }
+
+  const checked = filterCheckboxes(control).filter((input) => input.checked);
+  if (checked.length === 1) {
+    label.textContent = checked[0].closest('label')?.textContent?.trim() || checked[0].value;
+    return;
+  }
+
+  label.textContent = `${checked.length} ${checked.length === 1 ? singular : plural}`;
+}
+
+function normalizeMultiDropdown(control, allValue, changedInput = null) {
+  if (!isMultiDropdown(control)) return;
+
+  const checkboxes = filterCheckboxes(control);
+  const allInput = checkboxes.find((input) => input.value === allValue);
+  if (!allInput) return;
+
+  if (changedInput?.value === allValue && changedInput.checked) {
+    checkboxes.forEach((input) => {
+      if (input !== allInput) input.checked = false;
+    });
+  } else if (changedInput && changedInput.value !== allValue && changedInput.checked) {
+    allInput.checked = false;
+  }
+
+  if (!checkboxes.some((input) => input.checked)) {
+    allInput.checked = true;
+  }
+
+  updateMultiDropdownLabel(control, allValue);
+}
+
+function normalizeMultiSelect(control, allValue, changedInput = null) {
+  if (!control) return;
+
+  if (isMultiDropdown(control)) {
+    normalizeMultiDropdown(control, allValue, changedInput);
+    return;
+  }
+
+  if (!control.multiple) return;
+
+  const selected = [...control.selectedOptions].map((opt) => opt.value);
+  const allOption = [...control.options].find((opt) => opt.value === allValue);
   if (!allOption) return;
 
   if (!selected.length) {
@@ -473,14 +545,22 @@ function normalizeMultiSelect(select, allValue) {
   }
 }
 
-function handleTicketTypeFilterChange() {
-  normalizeMultiSelect(els.ticketTypeFilter, 'todos');
-  renderTickets();
+function closeMultiDropdown(control) {
+  if (isMultiDropdown(control)) {
+    window.setTimeout(() => { control.open = false; }, 80);
+  }
 }
 
-function handleOrgFilterChange() {
-  normalizeMultiSelect(els.orgFilter, 'todas');
+function handleTicketTypeFilterChange(event) {
+  normalizeMultiSelect(els.ticketTypeFilter, 'todos', event.target);
   renderTickets();
+  if (event.target?.matches?.('input[data-filter-option]')) closeMultiDropdown(els.ticketTypeFilter);
+}
+
+function handleOrgFilterChange(event) {
+  normalizeMultiSelect(els.orgFilter, 'todas', event.target);
+  renderTickets();
+  if (event.target?.matches?.('input[data-filter-option]')) closeMultiDropdown(els.orgFilter);
 }
 
 function normalizeProductCode(value) {
@@ -610,13 +690,53 @@ function startOrgListener() {
 }
 
 
+function fillOrgDropdown(dropdown, activeOrgs, includeAll = false) {
+  if (!isMultiDropdown(dropdown)) return;
+
+  const allValue = dropdown.dataset.allValue || (includeAll ? 'todas' : 'todos');
+  const selectedBefore = selectedValues(dropdown, allValue);
+  const menu = dropdown.querySelector('.multi-dropdown-menu');
+  if (!menu) return;
+
+  menu.innerHTML = '';
+
+  if (includeAll) {
+    const label = document.createElement('label');
+    label.innerHTML = `<input type="checkbox" value="${escapeHtml(allValue)}" data-filter-option /> ${escapeHtml(dropdown.dataset.labelAll || 'Todas')}`;
+    menu.appendChild(label);
+  }
+
+  activeOrgs.forEach((org) => {
+    const label = document.createElement('label');
+    label.innerHTML = `<input type="checkbox" value="${escapeHtml(org.id)}" data-filter-option /> ${escapeHtml(org.nome)}`;
+    menu.appendChild(label);
+  });
+
+  const checkboxes = filterCheckboxes(dropdown);
+  checkboxes.forEach((input) => {
+    input.checked = selectedBefore.includes(input.value);
+  });
+
+  if (includeAll && !checkboxes.some((input) => input.checked)) {
+    const allInput = checkboxes.find((input) => input.value === allValue);
+    if (allInput) allInput.checked = true;
+  }
+
+  normalizeMultiDropdown(dropdown, allValue);
+}
+
 function renderOrgSelects() {
   const activeOrgs = state.orgs.filter((org) => org.ativa !== false);
 
   const fill = (select, includeAll = false) => {
     if (!select) return;
 
-    const selectedBefore = [...select.selectedOptions].map((opt) => opt.value);
+    if (isMultiDropdown(select)) {
+      fillOrgDropdown(select, activeOrgs, includeAll);
+      return;
+    }
+
+    const selectedBefore = select.multiple ? [...select.selectedOptions].map((opt) => opt.value) : [];
     const current = select.value;
 
     select.innerHTML = '';
@@ -2096,6 +2216,10 @@ els.ticketKeyInput?.addEventListener('blur', () => {
 });
 
 document.addEventListener('click', (event) => {
+  document.querySelectorAll('.multi-dropdown[open]').forEach((dropdown) => {
+    if (!dropdown.contains(event.target)) dropdown.open = false;
+  });
+
   const closeId = event.target?.dataset?.closeDialog;
   if (closeId) $(closeId)?.close();
 

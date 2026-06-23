@@ -126,21 +126,30 @@
         <input id="searchInput" placeholder="Chave, nota, CNPJ, produto ou formulário" />
       </div>
 
-      <label class="field compact multi-field">
+      <div class="field compact dropdown-field">
         <span>Formulários</span>
-        <select id="ticketTypeFilter" class="multi-select" multiple size="5" aria-label="Filtrar por formulário">
-          <option value="todos" selected>Todos</option>
-          <option value="nf_caminhao_porta">NF • Caminhão na porta</option>
-          <option value="nf_adiantamento">NF • Adiantamento</option>
-          <option value="nota_fiscal">NF • Antigo</option>
-          <option value="reativacao_produtos">Reativação de produtos</option>
-          <option value="novos_produtos">Novos produtos</option>
-          <option value="pedido_em_andamento">Pedido em andamento</option>
-          <option value="divergencia_flow">Divergência no Flow</option>
-          <option value="outras">Outras</option>
-        </select>
-        <small class="field-help">Use Ctrl para escolher mais de uma opção.</small>
-      </label>
+        <details
+          id="ticketTypeFilter"
+          class="multi-dropdown"
+          data-all-value="todos"
+          data-label-all="Todos"
+          data-label-singular="formulário"
+          data-label-plural="formulários"
+        >
+          <summary><span class="multi-dropdown-label">Todos</span></summary>
+          <div class="multi-dropdown-menu" aria-label="Filtrar por formulário">
+            <label><input type="checkbox" value="todos" data-filter-option checked /> Todos</label>
+            <label><input type="checkbox" value="nf_caminhao_porta" data-filter-option /> NF • Caminhão na porta</label>
+            <label><input type="checkbox" value="nf_adiantamento" data-filter-option /> NF • Adiantamento</label>
+            <label><input type="checkbox" value="nota_fiscal" data-filter-option /> NF • Antigo</label>
+            <label><input type="checkbox" value="reativacao_produtos" data-filter-option /> Reativação de produtos</label>
+            <label><input type="checkbox" value="novos_produtos" data-filter-option /> Novos produtos</label>
+            <label><input type="checkbox" value="pedido_em_andamento" data-filter-option /> Pedido em andamento</label>
+            <label><input type="checkbox" value="divergencia_flow" data-filter-option /> Divergência no Flow</label>
+            <label><input type="checkbox" value="outras" data-filter-option /> Outras</label>
+          </div>
+        </details>
+      </div>
 
       <label class="field compact">
         <span>Status</span>
@@ -156,11 +165,22 @@
         </select>
       </label>
 
-      <label id="orgFilterWrap" class="field compact multi-field hidden">
+      <div id="orgFilterWrap" class="field compact dropdown-field hidden">
         <span>Organizações</span>
-        <select id="orgFilter" class="multi-select" multiple size="5" aria-label="Filtrar por organização"></select>
-        <small class="field-help">Use Ctrl para escolher mais de uma loja.</small>
-      </label>
+        <details
+          id="orgFilter"
+          class="multi-dropdown"
+          data-all-value="todas"
+          data-label-all="Todas"
+          data-label-singular="organização"
+          data-label-plural="organizações"
+        >
+          <summary><span class="multi-dropdown-label">Todas</span></summary>
+          <div class="multi-dropdown-menu" aria-label="Filtrar por organização">
+            <label><input type="checkbox" value="todas" data-filter-option checked /> Todas</label>
+          </div>
+        </details>
+      </div>
     </section>
 
     <section class="summary-grid">
