@@ -1,25 +1,16 @@
 // ==UserScript==
-// @name         Xabuia • Infradesk Caminhão na Porta
+// @name         Xabuia • Infradesk → Firebase direto
 // @namespace    xabuia/infradesk
-// @version      1.4.0
-// @description  Abre e acompanha ocorrências Xabuia direto nos cards de NF do Infradesk.
+// @version      4.0.0
+// @description  Abre/atualiza chamados Xabuia direto do card do Infradesk, sem seleção manual de status; reabre somente chamados encerrados.
 // @author       Xabuia
-// @match        https://*.infradesk.app/backend/chamados/painel*
+// @match        https://asp.infradesk.app/backend/chamados/painel*
+// @match        https://asp.infradesk.app/backend/chamados*
 // @run-at       document-end
-// @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
-// @homepageURL  https://chamadossicofe-design.github.io/xabuia/
-// @supportURL   https://github.com/chamadossicofe-design/xabuia/issues
-// @updateURL    https://chamadossicofe-design.github.io/xabuia/xabuia.js
-// @downloadURL  https://chamadossicofe-design.github.io/xabuia/xabuia.js
-// @grant        GM_addStyle
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_deleteValue
-// @connect      firestore.googleapis.com
-// @connect      identitytoolkit.googleapis.com
-// @connect      securetoken.googleapis.com
-// @connect      www.googleapis.com
-// @connect      chamadossicofe-design.github.io
+// @grant        none
+// @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
+// @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
+// @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js
 // ==/UserScript==
 
 (function () {
