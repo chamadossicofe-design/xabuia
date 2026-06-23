@@ -16,7 +16,6 @@
 <body>
   <div id="toast" class="toast hidden"></div>
 
-  <!-- LOGIN -->
   <main id="authView" class="auth-shell hidden">
     <section class="auth-card">
       <div class="brand">
@@ -56,19 +55,14 @@
         <span class="google-g">G</span> Entrar/Criar com Google
       </button>
 
-      <button id="resetPasswordBtn" class="btn link-btn" type="button">
-        Definir ou recuperar senha por e-mail
-      </button>
+      <button id="resetPasswordBtn" class="btn link-btn" type="button">Definir ou recuperar senha por e-mail</button>
 
       <div id="connectionHelp" class="notice hidden"></div>
 
-      <p id="authHint" class="muted center">
-        Ao criar conta, a organização será escolhida no primeiro acesso.
-      </p>
+      <p id="authHint" class="muted center">Ao criar conta, a organização será escolhida no primeiro acesso.</p>
     </section>
   </main>
 
-  <!-- PRIMEIRO ACESSO / ORGANIZAÇÃO -->
   <main id="onboardingView" class="auth-shell hidden">
     <section class="auth-card">
       <div class="brand">
@@ -94,15 +88,13 @@
       </form>
 
       <p id="onboardingEmpty" class="notice hidden">
-        Nenhuma organização cadastrada ainda.
-        Entre primeiro com <strong>chamadossicofe@gmail.com</strong> para criar as organizações.
+        Nenhuma organização cadastrada ainda. Entre primeiro com <strong>chamadossicofe@gmail.com</strong> para criar as organizações.
       </p>
 
       <button id="logoutOnboardingBtn" class="btn ghost" type="button">Sair</button>
     </section>
   </main>
 
-  <!-- BLOQUEADO -->
   <main id="blockedView" class="auth-shell hidden">
     <section class="auth-card danger-card">
       <h1>Acesso bloqueado</h1>
@@ -111,7 +103,6 @@
     </section>
   </main>
 
-  <!-- APP -->
   <main id="appView" class="app hidden">
     <header class="topbar">
       <div class="brand inline">
@@ -129,20 +120,26 @@
       </div>
     </header>
 
-    <!-- FILTROS -->
-    <section class="toolbar card">
-      <div class="field grow">
-        <span>Buscar por chave</span>
-        <input id="searchInput" placeholder="Digite parte da chave de acesso" />
+    <section class="toolbar card toolbar-v12">
+      <div class="field grow search-field">
+        <span>Buscar</span>
+        <input id="searchInput" placeholder="Chave, nota, CNPJ, produto ou formulário" />
       </div>
 
-      <label class="field compact">
-        <span>Tipo</span>
-        <select id="ticketTypeFilter">
+      <label class="field compact multi-field">
+        <span>Formulários</span>
+        <select id="ticketTypeFilter" class="multi-select" multiple size="5" aria-label="Filtrar por formulário">
           <option value="todos" selected>Todos</option>
-          <option value="nota_fiscal">Nota fiscal</option>
+          <option value="nf_caminhao_porta">NF • Caminhão na porta</option>
+          <option value="nf_adiantamento">NF • Adiantamento</option>
+          <option value="nota_fiscal">NF • Antigo</option>
+          <option value="reativacao_produtos">Reativação de produtos</option>
+          <option value="novos_produtos">Novos produtos</option>
+          <option value="pedido_em_andamento">Pedido em andamento</option>
+          <option value="divergencia_flow">Divergência no Flow</option>
           <option value="outras">Outras</option>
         </select>
+        <small class="field-help">Use Ctrl para escolher mais de uma opção.</small>
       </label>
 
       <label class="field compact">
@@ -159,58 +156,29 @@
         </select>
       </label>
 
-      <label id="orgFilterWrap" class="field compact hidden">
-        <span>Organização</span>
-        <select id="orgFilter"></select>
+      <label id="orgFilterWrap" class="field compact multi-field hidden">
+        <span>Organizações</span>
+        <select id="orgFilter" class="multi-select" multiple size="5" aria-label="Filtrar por organização"></select>
+        <small class="field-help">Use Ctrl para escolher mais de uma loja.</small>
       </label>
     </section>
 
-    <!-- CONTADORES -->
     <section class="summary-grid">
-      <article class="metric card">
-        <span>Abertos</span>
-        <strong id="countAberto">0</strong>
-      </article>
-
-      <article class="metric card">
-        <span>Reabertos</span>
-        <strong id="countReaberto">0</strong>
-      </article>
-
-      <article class="metric card">
-        <span>Em tratamento</span>
-        <strong id="countTratamento">0</strong>
-      </article>
-
-      <article class="metric card">
-        <span>Informações divergentes</span>
-        <strong id="countInformacoesDivergentes">0</strong>
-      </article>
-
-      <article class="metric card">
-        <span>Devolver e recusar</span>
-        <strong id="countDevolverRecusar">0</strong>
-      </article>
-
-      <article class="metric card">
-        <span>Finalizados</span>
-        <strong id="countFinalizado">0</strong>
-      </article>
-
-      <article class="metric card">
-        <span>Total visível</span>
-        <strong id="countTotal">0</strong>
-      </article>
+      <article class="metric card"><span>Abertos</span><strong id="countAberto">0</strong></article>
+      <article class="metric card"><span>Reabertos</span><strong id="countReaberto">0</strong></article>
+      <article class="metric card"><span>Em tratamento</span><strong id="countTratamento">0</strong></article>
+      <article class="metric card"><span>Informações divergentes</span><strong id="countInformacoesDivergentes">0</strong></article>
+      <article class="metric card"><span>Devolver e recusar</span><strong id="countDevolverRecusar">0</strong></article>
+      <article class="metric card"><span>Finalizados</span><strong id="countFinalizado">0</strong></article>
+      <article class="metric card"><span>Total visível</span><strong id="countTotal">0</strong></article>
     </section>
 
-    <!-- LISTA / DETALHE -->
     <section class="content-grid">
       <section class="card ticket-list-card">
         <div class="section-head">
           <h2>Chamados</h2>
           <span id="liveStatus" class="pill">Carregando...</span>
         </div>
-
         <div id="ticketList" class="ticket-list"></div>
       </section>
 
@@ -221,28 +189,65 @@
     </section>
   </main>
 
-  <!-- MODAL: ESCOLHER TIPO DE CHAMADO -->
-  <dialog id="ticketTypeDialog" class="modal">
+  <dialog id="ticketTypeDialog" class="modal wide">
     <div class="modal-card">
       <div class="section-head">
         <h2>Novo chamado</h2>
         <button class="icon-btn" type="button" data-close-dialog="ticketTypeDialog">×</button>
       </div>
 
-      <p class="muted">
-        Escolha o tipo de chamado que deseja abrir.
-      </p>
+      <p class="muted">Escolha o formulário. A tratativa é a mesma, mas os relatórios e filtros separam cada tipo.</p>
 
-      <div class="ticket-type-grid">
-        <button id="chooseInvoiceTicketBtn" class="ticket-type-card" type="button" data-ticket-type="nota_fiscal">
-          <strong>Nota fiscal</strong>
-          <span>Chamado por chave de acesso NF-e com 44 números.</span>
-        </button>
+      <div class="ticket-type-sections">
+        <section class="ticket-type-section">
+          <h3>Notas fiscais</h3>
+          <div class="ticket-type-grid">
+            <button id="chooseInvoiceTruckBtn" class="ticket-type-card priority" type="button" data-ticket-type="nf_caminhao_porta">
+              <strong>Caminhão na porta</strong>
+              <span>Prioridade maior: nota realmente chegando/aguardando recebimento.</span>
+            </button>
 
-        <button id="chooseOtherTicketBtn" class="ticket-type-card" type="button" data-ticket-type="outras">
-          <strong>Outras</strong>
-          <span>Modelo em construção para outros tipos de solicitação.</span>
-        </button>
+            <button id="chooseInvoiceAdvanceBtn" class="ticket-type-card" type="button" data-ticket-type="nf_adiantamento">
+              <strong>Adiantamento</strong>
+              <span>Antecipação de análise para o operador se preparar.</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="ticket-type-section">
+          <h3>Produtos</h3>
+          <div class="ticket-type-grid four">
+            <button id="chooseProductReactivationBtn" class="ticket-type-card" type="button" data-ticket-type="reativacao_produtos">
+              <strong>Reativação de produtos</strong>
+              <span>Código do produto, observação e print.</span>
+            </button>
+
+            <button id="chooseNewProductBtn" class="ticket-type-card" type="button" data-ticket-type="novos_produtos">
+              <strong>Novos produtos</strong>
+              <span>Código do produto, observação e print.</span>
+            </button>
+
+            <button id="choosePedidoAndamentoBtn" class="ticket-type-card" type="button" data-ticket-type="pedido_em_andamento">
+              <strong>Pedido em andamento</strong>
+              <span>Código do produto, observação e print.</span>
+            </button>
+
+            <button id="chooseDivergenciaFlowBtn" class="ticket-type-card" type="button" data-ticket-type="divergencia_flow">
+              <strong>Divergência no Flow</strong>
+              <span>Código do produto, observação e print.</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="ticket-type-section muted-section">
+          <h3>Outras</h3>
+          <div class="ticket-type-grid">
+            <button id="chooseOtherTicketBtn" class="ticket-type-card disabled-look" type="button" data-ticket-type="outras">
+              <strong>Outras</strong>
+              <span>Modelo em construção para outros tipos de solicitação.</span>
+            </button>
+          </div>
+        </section>
       </div>
 
       <div class="modal-actions">
@@ -251,7 +256,6 @@
     </div>
   </dialog>
 
-  <!-- MODAL: NOTA FISCAL -->
   <dialog id="ticketDialog" class="modal">
     <form id="ticketForm" method="dialog" class="modal-card">
       <div class="section-head">
@@ -259,25 +263,13 @@
         <button class="icon-btn" value="cancel" type="button" data-close-dialog="ticketDialog">×</button>
       </div>
 
-      <input id="ticketTypeInput" type="hidden" value="nota_fiscal" />
+      <input id="ticketTypeInput" type="hidden" value="nf_caminhao_porta" />
 
       <label class="field">
         <span>Chave de acesso da NF-e</span>
-        <input
-          id="ticketKeyInput"
-          required
-          inputmode="numeric"
-          autocomplete="off"
-          maxlength="80"
-          placeholder="Cole a chave de acesso com 44 números"
-          aria-describedby="ticketKeyHelp"
-        />
-        <small id="ticketKeyHelp" class="field-help">
-          Pode colar com espaços, pontos ou caracteres especiais. O sistema vai limpar e manter apenas números.
-        </small>
-        <small id="ticketKeyError" class="field-error hidden">
-          Chave de acesso inválida. Informe exatamente 44 números.
-        </small>
+        <input id="ticketKeyInput" required inputmode="numeric" autocomplete="off" maxlength="80" placeholder="Cole a chave de acesso com 44 números" aria-describedby="ticketKeyHelp" />
+        <small id="ticketKeyHelp" class="field-help">Pode colar com espaços, pontos ou caracteres especiais. O sistema vai limpar e manter apenas números.</small>
+        <small id="ticketKeyError" class="field-error hidden">Chave de acesso inválida. Informe exatamente 44 números.</small>
       </label>
 
       <div id="ticketKeyPreview" class="key-preview hidden">
@@ -297,22 +289,14 @@
 
       <div class="field">
         <span>Anexo</span>
-        <input
-          id="ticketFileInput"
-          class="hidden-file"
-          type="file"
-          accept="image/*,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx"
-        />
-
+        <input id="ticketFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx" />
         <div id="ticketPasteZone" class="paste-zone" tabindex="0" role="button" aria-label="Adicionar anexo">
           <div class="paste-empty">
             <strong>Cole uma imagem aqui com Ctrl+V</strong>
             <small>Também pode clicar para escolher arquivo ou arrastar uma imagem para esta área.</small>
           </div>
-
           <div id="ticketPastePreview" class="paste-preview hidden"></div>
         </div>
-
         <button id="clearTicketFileBtn" class="btn ghost hidden" type="button">Remover anexo</button>
       </div>
 
@@ -323,7 +307,53 @@
     </form>
   </dialog>
 
-  <!-- MODAL: OUTRAS -->
+  <dialog id="productTicketDialog" class="modal">
+    <form id="productTicketForm" method="dialog" class="modal-card">
+      <div class="section-head">
+        <h2 id="productDialogTitle">Novo chamado • Produto</h2>
+        <button class="icon-btn" value="cancel" type="button" data-close-dialog="productTicketDialog">×</button>
+      </div>
+
+      <input id="productTypeInput" type="hidden" value="reativacao_produtos" />
+
+      <label class="field">
+        <span>Código do produto</span>
+        <input id="productCodeInput" required autocomplete="off" placeholder="Ex.: 10012515" />
+      </label>
+
+      <label id="productOrgWrap" class="field hidden">
+        <span>Organização</span>
+        <select id="productOrgSelect"></select>
+      </label>
+
+      <label class="field">
+        <span>Observação inicial</span>
+        <textarea id="productObsInput" rows="6" required placeholder="Descreva a solicitação. Pode colar linhas do Excel aqui."></textarea>
+        <small class="field-help">Se você copiar uma tabela do Excel e colar aqui, o histórico vai mostrar como tabelinha.</small>
+      </label>
+
+      <div id="productObsPreview" class="excel-preview hidden"></div>
+
+      <div class="field">
+        <span>Print ou anexo</span>
+        <input id="productFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx" />
+        <div id="productPasteZone" class="paste-zone" tabindex="0" role="button" aria-label="Adicionar anexo">
+          <div class="paste-empty">
+            <strong>Cole uma imagem aqui com Ctrl+V</strong>
+            <small>Também pode clicar para escolher arquivo ou arrastar uma imagem para esta área.</small>
+          </div>
+          <div id="productPastePreview" class="paste-preview hidden"></div>
+        </div>
+        <button id="clearProductFileBtn" class="btn ghost hidden" type="button">Remover anexo</button>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn ghost" value="cancel" type="button" data-close-dialog="productTicketDialog">Cancelar</button>
+        <button id="saveProductTicketBtn" class="btn primary" type="submit">Salvar chamado</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="otherTicketDialog" class="modal">
     <form id="otherTicketForm" method="dialog" class="modal-card">
       <div class="section-head">
@@ -331,45 +361,15 @@
         <button class="icon-btn" value="cancel" type="button" data-close-dialog="otherTicketDialog">×</button>
       </div>
 
-      <div class="notice">
-        Este modelo ainda está em construção. Vamos definir os campos desse tipo no próximo passo.
-      </div>
-
-      <input id="otherTicketTypeInput" type="hidden" value="outras" />
-
-      <label class="field">
-        <span>Identificação</span>
-        <input id="otherTicketKeyInput" placeholder="Ex.: protocolo, pedido, documento ou referência" disabled />
-      </label>
-
-      <label id="otherTicketOrgWrap" class="field hidden">
-        <span>Organização</span>
-        <select id="otherTicketOrgSelect" disabled></select>
-      </label>
-
-      <label class="field">
-        <span>Observação inicial</span>
-        <textarea id="otherTicketObsInput" rows="5" placeholder="Descreva a solicitação" disabled></textarea>
-      </label>
-
-      <div class="field">
-        <span>Anexo</span>
-        <div class="paste-zone disabled" tabindex="-1" aria-label="Área de anexo em construção">
-          <div class="paste-empty">
-            <strong>Área de anexo em construção</strong>
-            <small>Vamos ativar este formulário depois de definir o modelo.</small>
-          </div>
-        </div>
-      </div>
+      <div class="notice">Este modelo ainda está em construção. Vamos definir os campos desse tipo depois.</div>
 
       <div class="modal-actions">
         <button class="btn ghost" value="cancel" type="button" data-close-dialog="otherTicketDialog">Fechar</button>
-        <button id="saveOtherTicketBtn" class="btn primary" type="submit" disabled>Salvar chamado</button>
+        <button class="btn primary" type="submit" disabled>Salvar chamado</button>
       </div>
     </form>
   </dialog>
 
-  <!-- ADMIN -->
   <dialog id="adminDialog" class="modal wide">
     <div class="modal-card">
       <div class="section-head">
@@ -380,12 +380,10 @@
       <div class="admin-grid">
         <section>
           <h3>Organizações</h3>
-
           <form id="orgForm" class="row-form">
             <input id="orgNameInput" placeholder="Nova organização" required />
             <button class="btn primary" type="submit">Criar</button>
           </form>
-
           <div id="orgAdminList" class="mini-list"></div>
         </section>
 
@@ -396,28 +394,19 @@
 
         <section class="report-section">
           <h3>Relatório dos operadores</h3>
-          <p class="muted">
-            Veja quantos chamados cada operador colocou em tratamento, finalizou, reabriu,
-            marcou como divergente ou marcou como devolvido/recusado no intervalo informado.
-          </p>
-
+          <p class="muted">Veja quantos chamados cada operador colocou em tratamento, finalizou, reabriu, marcou como divergente ou marcou como devolvido/recusado no intervalo informado.</p>
           <div class="report-filters">
             <label class="field">
               <span>Data inicial</span>
               <input id="operatorReportStart" type="date" />
             </label>
-
             <label class="field">
               <span>Data final</span>
               <input id="operatorReportEnd" type="date" />
             </label>
-
             <button id="operatorReportBtn" class="btn primary" type="button">Gerar relatório</button>
           </div>
-
-          <div id="operatorReportBox" class="report-box empty-state">
-            Informe o período e clique em Gerar relatório.
-          </div>
+          <div id="operatorReportBox" class="report-box empty-state">Informe o período e clique em Gerar relatório.</div>
         </section>
       </div>
     </div>

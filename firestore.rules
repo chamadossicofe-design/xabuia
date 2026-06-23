@@ -108,14 +108,11 @@ service cloud.firestore {
     }
 
     match /organizacoes/{orgId} {
-      // Necessário para o primeiro cadastro: usuário logado precisa listar as organizações ativas antes de ter perfil.
       allow read: if signedIn();
       allow create, update, delete: if isAdmin();
     }
 
     match /chamados/{chamadoId} {
-      // get separado para permitir consultar a chave determinística antes de criar.
-      // Sem isso, getDoc() em um chamado ainda inexistente pode retornar permission-denied.
       allow get: if isActive()
         && (
           !exists(ticketPath(chamadoId))
@@ -129,6 +126,7 @@ service cloud.firestore {
         && request.resource.data.criadoPor == request.auth.uid
         && request.resource.data.status == 'aberto'
         && request.resource.data.keys().hasOnly([
+          'tipoChamado', 'codigoProduto',
           'chave', 'chaveBusca', 'organizacaoId', 'organizacaoNome',
           'status', 'criadoPor', 'criadoPorNome', 'criadoPorEmail',
           'criadoEm', 'atualizadoEm'
@@ -144,7 +142,9 @@ service cloud.firestore {
               'anexo', 'status', 'atualizadoEm',
               'reabertoPor', 'reabertoPorNome', 'reabertoPorEmail', 'reabertoEm',
               'operadorTratamentoId', 'operadorTratamentoNome', 'operadorTratamentoEmail', 'tratamentoIniciadoEm',
-              'finalizadoPor', 'finalizadoPorNome', 'finalizadoPorEmail', 'finalizadoEm'
+              'finalizadoPor', 'finalizadoPorNome', 'finalizadoPorEmail', 'finalizadoEm',
+              'informacoesDivergentesPor', 'informacoesDivergentesPorNome', 'informacoesDivergentesPorEmail', 'informacoesDivergentesEm',
+              'devolverRecusarPor', 'devolverRecusarPorNome', 'devolverRecusarPorEmail', 'devolverRecusarEm'
             ])
           )
         );

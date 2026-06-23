@@ -44,13 +44,39 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V11';
+const APP_VERSION = 'V12';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
+  nf_caminhao_porta: 'Nota fiscal • Caminhão na porta',
+  nf_adiantamento: 'Nota fiscal • Adiantamento',
   nota_fiscal: 'Nota fiscal',
+  reativacao_produtos: 'Reativação de produtos',
+  novos_produtos: 'Novos produtos',
+  pedido_em_andamento: 'Pedido em andamento',
+  divergencia_flow: 'Divergência no Flow',
   outras: 'Outras'
 };
+
+const TICKET_GROUPS = {
+  nota_fiscal: ['nf_caminhao_porta', 'nf_adiantamento', 'nota_fiscal'],
+  produtos: ['reativacao_produtos', 'novos_produtos', 'pedido_em_andamento', 'divergencia_flow']
+};
+
+const PRODUCT_TICKET_TYPES = new Set(TICKET_GROUPS.produtos);
+const INVOICE_TICKET_TYPES = new Set(TICKET_GROUPS.nota_fiscal);
+
+function ticketTypeLabel(type) {
+  return TICKET_TYPE_LABELS[type] || type || 'Chamado';
+}
+
+function isProductTicketType(type) {
+  return PRODUCT_TICKET_TYPES.has(type);
+}
+
+function isInvoiceTicketType(type) {
+  return INVOICE_TICKET_TYPES.has(type || 'nota_fiscal');
+}
 
 const STATUS_LABELS = {
   aberto: 'Aberto',
@@ -136,7 +162,12 @@ const els = {
   ticketList: $('ticketList'),
   ticketDetail: $('ticketDetail'),
   ticketTypeDialog: $('ticketTypeDialog'),
-  chooseInvoiceTicketBtn: $('chooseInvoiceTicketBtn'),
+  chooseInvoiceTruckBtn: $('chooseInvoiceTruckBtn'),
+  chooseInvoiceAdvanceBtn: $('chooseInvoiceAdvanceBtn'),
+  chooseProductReactivationBtn: $('chooseProductReactivationBtn'),
+  chooseNewProductBtn: $('chooseNewProductBtn'),
+  choosePedidoAndamentoBtn: $('choosePedidoAndamentoBtn'),
+  chooseDivergenciaFlowBtn: $('chooseDivergenciaFlowBtn'),
   chooseOtherTicketBtn: $('chooseOtherTicketBtn'),
   ticketDialog: $('ticketDialog'),
   ticketForm: $('ticketForm'),
@@ -155,6 +186,20 @@ const els = {
   ticketPastePreview: $('ticketPastePreview'),
   clearTicketFileBtn: $('clearTicketFileBtn'),
   saveTicketBtn: $('saveTicketBtn'),
+  productTicketDialog: $('productTicketDialog'),
+  productTicketForm: $('productTicketForm'),
+  productDialogTitle: $('productDialogTitle'),
+  productTypeInput: $('productTypeInput'),
+  productCodeInput: $('productCodeInput'),
+  productOrgWrap: $('productOrgWrap'),
+  productOrgSelect: $('productOrgSelect'),
+  productObsInput: $('productObsInput'),
+  productObsPreview: $('productObsPreview'),
+  productFileInput: $('productFileInput'),
+  productPasteZone: $('productPasteZone'),
+  productPastePreview: $('productPastePreview'),
+  clearProductFileBtn: $('clearProductFileBtn'),
+  saveProductTicketBtn: $('saveProductTicketBtn'),
   otherTicketDialog: $('otherTicketDialog'),
   otherTicketForm: $('otherTicketForm'),
   adminDialog: $('adminDialog'),
@@ -178,6 +223,7 @@ const state = {
   selectedTicketId: null,
   pendingTicketFile: null,
   pendingHistoryFile: null,
+  pendingProductFile: null,
   ticketBuckets: {},
   unsubTickets: null,
   unsubOrgs: null,
@@ -402,6 +448,119 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+
+function selectedValues(select, allValue = 'todos') {
+  if (!select) return [allValue];
+  if (!select.multiple) return [select.value || allValue];
+  const values = [...select.selectedOptions].map((opt) => opt.value).filter(Boolean);
+  return values.length ? values : [allValue];
+}
+
+
+function normalizeMultiSelect(select, allValue) {
+  if (!select || !select.multiple) return;
+  const selected = [...select.selectedOptions].map((opt) => opt.value);
+  const allOption = [...select.options].find((opt) => opt.value === allValue);
+  if (!allOption) return;
+
+  if (!selected.length) {
+    allOption.selected = true;
+    return;
+  }
+
+  if (selected.length > 1 && selected.includes(allValue)) {
+    allOption.selected = false;
+  }
+}
+
+function handleTicketTypeFilterChange() {
+  normalizeMultiSelect(els.ticketTypeFilter, 'todos');
+  renderTickets();
+}
+
+function handleOrgFilterChange() {
+  normalizeMultiSelect(els.orgFilter, 'todas');
+  renderTickets();
+}
+
+function normalizeProductCode(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+}
+
+function ticketTitle(ticket) {
+  const type = ticket?.tipoChamado || 'nota_fiscal';
+  if (isProductTicketType(type)) {
+    return `${ticketTypeLabel(type)} • Produto ${ticket.codigoProduto || ticket.chave || '—'}`;
+  }
+  return compactKeyTitle(ticket?.chave || '');
+}
+
+function ticketRawLine(ticket) {
+  const type = ticket?.tipoChamado || 'nota_fiscal';
+  if (isProductTicketType(type)) return `Código do produto: ${ticket.codigoProduto || ticket.chave || '—'}`;
+  return ticket.chave || '';
+}
+
+function isTabularText(text) {
+  const lines = String(text || '').trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 1) return false;
+  const tabLines = lines.filter((line) => line.includes('\t'));
+  if (!tabLines.length) return false;
+  const maxCols = Math.max(...tabLines.map((line) => line.split('\t').length));
+  return maxCols >= 2;
+}
+
+function renderTextContent(text) {
+  const value = String(text ?? '');
+  if (!isTabularText(value)) {
+    return `<div class="history-text">${escapeHtml(value)}</div>`;
+  }
+
+  const rows = value.trim().split(/\r?\n/).filter(Boolean).map((line) => line.split('\t'));
+  const maxCols = Math.max(...rows.map((row) => row.length));
+  const normalized = rows.map((row) => [...row, ...Array(maxCols - row.length).fill('')]);
+
+  return `
+    <div class="excel-table-wrap">
+      <table class="excel-table">
+        <tbody>
+          ${normalized.map((row) => `
+            <tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderProductInfo(ticket) {
+  return `
+    <div class="key-box product-key-box">
+      <div class="key-facts product-facts">
+        <span><strong>Formulário:</strong> ${escapeHtml(ticketTypeLabel(ticket.tipoChamado))}</span>
+        <span><strong>Código do produto:</strong> ${escapeHtml(ticket.codigoProduto || ticket.chave || '—')}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderTicketInfo(ticket) {
+  if (isProductTicketType(ticket.tipoChamado)) return renderProductInfo(ticket);
+  return renderKeyInfo(ticket.chave);
+}
+
+function updateProductObsPreview() {
+  if (!els.productObsPreview || !els.productObsInput) return;
+  const text = els.productObsInput.value;
+  if (!isTabularText(text)) {
+    els.productObsPreview.classList.add('hidden');
+    els.productObsPreview.innerHTML = '';
+    return;
+  }
+  els.productObsPreview.innerHTML = `<strong>Prévia da tabela colada:</strong>${renderTextContent(text)}`;
+  els.productObsPreview.classList.remove('hidden');
+}
+
 function setText(el, value) {
   if (el) el.textContent = value;
 }
@@ -450,29 +609,53 @@ function startOrgListener() {
   });
 }
 
+
 function renderOrgSelects() {
   const activeOrgs = state.orgs.filter((org) => org.ativa !== false);
 
   const fill = (select, includeAll = false) => {
+    if (!select) return;
+
+    const selectedBefore = [...select.selectedOptions].map((opt) => opt.value);
     const current = select.value;
+
     select.innerHTML = '';
+
     if (includeAll) {
       const opt = document.createElement('option');
       opt.value = 'todas';
       opt.textContent = 'Todas';
       select.appendChild(opt);
     }
+
     activeOrgs.forEach((org) => {
       const opt = document.createElement('option');
       opt.value = org.id;
       opt.textContent = org.nome;
       select.appendChild(opt);
     });
-    if ([...select.options].some((opt) => opt.value === current)) select.value = current;
+
+    if (select.multiple) {
+      const values = selectedBefore.length ? selectedBefore : (includeAll ? ['todas'] : []);
+      [...select.options].forEach((opt) => {
+        opt.selected = values.includes(opt.value);
+      });
+      if (includeAll && ![...select.selectedOptions].length && select.options.length) {
+        select.options[0].selected = true;
+      }
+      return;
+    }
+
+    if ([...select.options].some((opt) => opt.value === current)) {
+      select.value = current;
+    } else if (includeAll && select.options.length) {
+      select.value = 'todas';
+    }
   };
 
   fill(els.onboardingOrgSelect, false);
   fill(els.ticketOrgSelect, false);
+  fill(els.productOrgSelect, false);
   fill(els.orgFilter, true);
 
   const hasOrgs = activeOrgs.length > 0;
@@ -569,13 +752,16 @@ function startTicketsListener() {
   ];
 }
 
+
 function filteredTickets() {
   const searchRaw = normalizeKey(els.searchInput.value);
   const search = searchRaw.toLowerCase();
   const searchDigits = digitsOnly(searchRaw);
   const status = els.statusFilter.value || 'ativos';
-  const tipoChamado = els.ticketTypeFilter?.value || 'todos';
-  const orgId = els.orgFilter.value;
+  const typeValues = selectedValues(els.ticketTypeFilter, 'todos');
+  const orgValues = selectedValues(els.orgFilter, 'todas');
+  const allTypes = typeValues.includes('todos');
+  const allOrgs = orgValues.includes('todas');
 
   let tickets = state.tickets.filter((ticket) => {
     const ticketStatus = ticket.status || 'aberto';
@@ -584,32 +770,33 @@ function filteredTickets() {
     if (status === 'ativos' && !ACTIVE_STATUSES.includes(ticketStatus)) return false;
     if (status !== 'todos' && status !== 'ativos' && ticketStatus !== status) return false;
 
-    if (tipoChamado !== 'todos' && ticketTipo !== tipoChamado) return false;
+    if (!allTypes && !typeValues.includes(ticketTipo)) return false;
 
-    if (isOperatorOrAdmin() && orgId && orgId !== 'todas' && ticket.organizacaoId !== orgId) {
+    if (isOperatorOrAdmin() && !allOrgs && !orgValues.includes(ticket.organizacaoId)) {
       return false;
     }
 
     if (search) {
       const chave = String(ticket.chave || '').toLowerCase();
+      const codigo = String(ticket.codigoProduto || '').toLowerCase();
       const chaveDigits = digitsOnly(chave);
-      const title = compactKeyTitle(ticket.chave).toLowerCase();
-      const matchText = chave.includes(search) || title.includes(search);
-      const matchDigits = searchDigits && chaveDigits.includes(searchDigits);
+      const title = ticketTitle(ticket).toLowerCase();
+      const typeLabel = ticketTypeLabel(ticketTipo).toLowerCase();
+      const matchText = chave.includes(search) || codigo.includes(search) || title.includes(search) || typeLabel.includes(search);
+      const matchDigits = searchDigits && (chaveDigits.includes(searchDigits) || digitsOnly(codigo).includes(searchDigits));
       if (!matchText && !matchDigits) return false;
     }
 
     return true;
   });
 
-  // Padrão para usuário comum: não deixa a tela enorme.
-  // Se ele pesquisar ou mudar para outro status, mostramos tudo que bater com o filtro.
   if (!isOperatorOrAdmin() && status === 'ativos' && !search) {
     tickets = tickets.slice(0, 20);
   }
 
   return tickets;
 }
+
 
 function renderTickets() {
   const tickets = filteredTickets();
@@ -635,25 +822,27 @@ function renderTickets() {
     return;
   }
 
-  els.ticketList.innerHTML = tickets.map((ticket) => `
-    <button class="ticket-item ${ticket.id === state.selectedTicketId ? 'active' : ''}" type="button" data-ticket-id="${ticket.id}">
-      <div class="ticket-row">
-        <span class="ticket-key">${escapeHtml(compactKeyTitle(ticket.chave))}</span>
-        ${statusBadge(ticket.status)}
-      </div>
-      <div class="ticket-raw-key">${escapeHtml(ticket.chave)}</div>
-      <div class="ticket-meta">
-        <span>${escapeHtml(TICKET_TYPE_LABELS[ticket.tipoChamado || 'nota_fiscal'] || 'Chamado')}</span>
-        <span>•</span>
-        <span>${escapeHtml(ticket.organizacaoNome || 'Sem organização')}</span>
-        <span>•</span>
-        <span>Criado por ${escapeHtml(ticket.criadoPorNome || ticket.criadoPorEmail || '—')}</span>
-        ${ticket.operadorTratamentoNome ? `<span>•</span><span>Tratando: ${escapeHtml(ticket.operadorTratamentoNome)}</span>` : ''}
-        <span>•</span>
-        <span>${formatDate(ticket.atualizadoEm)}</span>
-      </div>
-    </button>
-  `).join('');
+  els.ticketList.innerHTML = tickets.map((ticket) => {
+    const tipo = ticket.tipoChamado || 'nota_fiscal';
+    return `
+      <button class="ticket-item ${ticket.id === state.selectedTicketId ? 'active' : ''}" type="button" data-ticket-id="${ticket.id}">
+        <div class="ticket-row">
+          <span class="ticket-key">${escapeHtml(ticketTitle(ticket))}</span>
+          ${statusBadge(ticket.status)}
+        </div>
+        <div class="ticket-form-title">${escapeHtml(ticketTypeLabel(tipo))}</div>
+        <div class="ticket-raw-key">${escapeHtml(ticketRawLine(ticket))}</div>
+        <div class="ticket-meta">
+          <span>${escapeHtml(ticket.organizacaoNome || 'Sem organização')}</span>
+          <span>•</span>
+          <span>Criado por ${escapeHtml(ticket.criadoPorNome || ticket.criadoPorEmail || '—')}</span>
+          ${ticket.operadorTratamentoNome ? `<span>•</span><span>Tratando: ${escapeHtml(ticket.operadorTratamentoNome)}</span>` : ''}
+          <span>•</span>
+          <span>${formatDate(ticket.atualizadoEm)}</span>
+        </div>
+      </button>
+    `;
+  }).join('');
 
   if (state.selectedTicketId) {
     renderTicketDetail(state.tickets.find((t) => t.id === state.selectedTicketId));
@@ -666,6 +855,7 @@ async function selectTicket(ticketId) {
   renderTickets();
   await renderTicketDetail(ticket);
 }
+
 
 async function renderTicketDetail(ticket) {
   if (!ticket) {
@@ -685,49 +875,56 @@ async function renderTicketDetail(ticket) {
   els.ticketDetail.innerHTML = `
     <div class="section-head detail-head">
       <div>
-        <h2 class="detail-title">${escapeHtml(compactKeyTitle(ticket.chave))}</h2>
-        <p class="muted">${escapeHtml(TICKET_TYPE_LABELS[ticket.tipoChamado || 'nota_fiscal'] || 'Chamado')} • ${escapeHtml(ticket.organizacaoNome || 'Sem organização')} • Atualizado ${formatDate(ticket.atualizadoEm)}</p>
+        <div class="detail-form-title">${escapeHtml(ticketTypeLabel(ticket.tipoChamado || 'nota_fiscal'))}</div>
+        <h2 class="detail-title">${escapeHtml(ticketTitle(ticket))}</h2>
+        <p class="muted">${escapeHtml(ticket.organizacaoNome || 'Sem organização')} • Atualizado ${formatDate(ticket.atualizadoEm)}</p>
         ${assignedLine}
       </div>
       ${statusBadge(ticket.status)}
     </div>
 
-    ${renderKeyInfo(ticket.chave)}
+    ${renderTicketInfo(ticket)}
 
     ${ticket.anexo?.url ? `<p><a class="attachment-link" href="${escapeHtml(ticket.anexo.url)}" target="_blank" rel="noopener">Abrir último anexo: ${escapeHtml(ticket.anexo.nome || 'arquivo')}</a></p>` : ''}
 
-    <div class="detail-actions">
+    <div class="occurrence-panel">
       ${isOperatorOrAdmin() ? `
-        <label class="field compact">
-          <span>Status</span>
-          <select id="detailStatusSelect">
-            <option value="aberto">Aberto</option>
-            <option value="reaberto">Reaberto</option>
-            <option value="em_tratamento">Em tratamento</option>
-            <option value="informacoes_divergentes">Informações divergentes</option>
-            <option value="devolver_recusar">Devolver e recusar</option>
-            <option value="finalizado">Finalizado</option>
-          </select>
-        </label>
-      ` : ''}
-      ${CLOSED_STATUSES.includes(ticket.status) ? `<button id="reopenTicketBtn" class="btn ghost" type="button">Reabrir chamado</button>` : ''}
-      <label class="field grow">
-        <span>Nova ocorrência</span>
-        <textarea id="newHistoryText" rows="3" placeholder="Digite uma nova ocorrência"></textarea>
-      </label>
-      <button id="addHistoryBtn" class="btn primary" type="button">Adicionar</button>
-    </div>
-
-    <div class="history-attachment">
-      <input id="historyFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx" />
-      <div id="historyPasteZone" class="paste-zone paste-zone-small" tabindex="0" role="button" aria-label="Adicionar anexo na ocorrência">
-        <div class="paste-empty">
-          <strong>Anexo da ocorrência</strong>
-          <small>Cole um print com Ctrl+V, clique para escolher arquivo ou arraste aqui.</small>
+        <div class="occurrence-toolbar">
+          <label class="field compact status-field">
+            <span>Status</span>
+            <select id="detailStatusSelect">
+              <option value="aberto">Aberto</option>
+              <option value="reaberto">Reaberto</option>
+              <option value="em_tratamento">Em tratamento</option>
+              <option value="informacoes_divergentes">Informações divergentes</option>
+              <option value="devolver_recusar">Devolver e recusar</option>
+              <option value="finalizado">Finalizado</option>
+            </select>
+          </label>
+          ${CLOSED_STATUSES.includes(ticket.status) ? `<button id="reopenTicketBtn" class="btn ghost" type="button">Reabrir chamado</button>` : ''}
         </div>
-        <div id="historyPastePreview" class="paste-preview hidden"></div>
+      ` : CLOSED_STATUSES.includes(ticket.status) ? `<div class="occurrence-toolbar"><button id="reopenTicketBtn" class="btn ghost" type="button">Reabrir chamado</button></div>` : ''}
+
+      <label class="field occurrence-textarea">
+        <span>Nova ocorrência</span>
+        <textarea id="newHistoryText" rows="4" placeholder="Digite uma nova ocorrência. Se colar uma tabela do Excel, ela aparecerá formatada no histórico."></textarea>
+      </label>
+
+      <div class="history-attachment">
+        <input id="historyFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx" />
+        <div id="historyPasteZone" class="paste-zone paste-zone-small" tabindex="0" role="button" aria-label="Adicionar anexo na ocorrência">
+          <div class="paste-empty">
+            <strong>Anexo da ocorrência</strong>
+            <small>Cole um print com Ctrl+V, clique para escolher arquivo ou arraste aqui.</small>
+          </div>
+          <div id="historyPastePreview" class="paste-preview hidden"></div>
+        </div>
+        <button id="clearHistoryFileBtn" class="btn ghost hidden" type="button">Remover anexo</button>
       </div>
-      <button id="clearHistoryFileBtn" class="btn ghost hidden" type="button">Remover anexo da ocorrência</button>
+
+      <div class="occurrence-actions">
+        <button id="addHistoryBtn" class="btn primary compact-add" type="button">Adicionar</button>
+      </div>
     </div>
 
     <h3>Histórico</h3>
@@ -749,6 +946,7 @@ async function renderTicketDetail(ticket) {
   await loadHistory(ticket.id);
 }
 
+
 async function loadHistory(ticketId) {
   const historyList = $('historyList');
   if (!historyList) return;
@@ -768,7 +966,7 @@ async function loadHistory(ticketId) {
         <strong>${escapeHtml(item.usuarioNome || item.usuarioEmail || 'Sistema')}</strong>
         ${historyTypeBadge(item.tipo)}
       </div>
-      <div class="history-text">${escapeHtml(item.texto)}</div>
+      ${renderTextContent(item.texto)}
       ${item.anexo?.url ? `<a class="attachment-link" href="${escapeHtml(item.anexo.url)}" target="_blank" rel="noopener">Abrir anexo: ${escapeHtml(item.anexo.nome || 'arquivo')}</a>` : ''}
       <small>${formatDate(item.criadoEm)}</small>
     </div>
@@ -919,10 +1117,11 @@ async function updateTicketStatus(ticket, status) {
   showToast('Status atualizado.', 'success');
 }
 
+
 async function createTicket(event) {
   event.preventDefault();
 
-  const tipoChamado = els.ticketTypeInput?.value || 'nota_fiscal';
+  const tipoChamado = els.ticketTypeInput?.value || 'nf_caminhao_porta';
   const chave = limparChaveNfe(els.ticketKeyInput.value);
   const observacao = normalizeKey(els.ticketObsInput.value);
   const tipoHistorico = 'criacao';
@@ -930,8 +1129,8 @@ async function createTicket(event) {
 
   syncTicketKeyInput(true);
 
-  if (tipoChamado !== 'nota_fiscal') {
-    return showToast('Este tipo de chamado ainda está em construção.', 'error');
+  if (!isInvoiceTicketType(tipoChamado)) {
+    return showToast('Este formulário não é de nota fiscal.', 'error');
   }
 
   if (!chaveNfeValida(chave)) {
@@ -948,10 +1147,7 @@ async function createTicket(event) {
   if (isOperatorOrAdmin()) {
     org = state.orgs.find((item) => item.id === els.ticketOrgSelect.value);
   } else {
-    org = {
-      id: state.profile.organizacaoId,
-      nome: state.profile.organizacaoNome
-    };
+    org = { id: state.profile.organizacaoId, nome: state.profile.organizacaoNome };
   }
 
   if (!org?.id) return showToast('Selecione uma organização.', 'error');
@@ -960,60 +1156,37 @@ async function createTicket(event) {
   els.saveTicketBtn.textContent = 'Salvando...';
 
   try {
-    const chaveBusca = keySearchValue(chave);
+    const chaveBusca = `${tipoChamado}:${keySearchValue(chave)}`;
     const deterministicRef = doc(db, 'chamados', ticketDocId(org.id, chaveBusca));
 
     const existingInMemory = state.tickets.find((ticket) => (
       ticket.organizacaoId === org.id
-      && (ticket.chaveBusca === chaveBusca || keySearchValue(ticket.chave) === chaveBusca)
+      && (ticket.chaveBusca === chaveBusca || `${ticket.tipoChamado || 'nota_fiscal'}:${keySearchValue(ticket.chave)}` === chaveBusca)
     ));
 
     let existingSnap = null;
-
     if (!existingInMemory) {
       try {
         existingSnap = await getDoc(deterministicRef);
       } catch (error) {
-        // Algumas regras antigas negavam getDoc() quando o chamado ainda não existia.
-        // Nesse caso seguimos para o setDoc(); se já existir e não puder alterar, o Firestore vai negar ali.
         if (error?.code !== 'permission-denied') throw error;
         console.warn('Consulta prévia do chamado foi negada; tentando salvar direto.', error);
       }
     }
 
     const existingRef = existingInMemory ? doc(db, 'chamados', existingInMemory.id) : deterministicRef;
-    const existingTicket = existingInMemory || (
-      existingSnap?.exists() ? { id: deterministicRef.id, ...existingSnap.data() } : null
-    );
+    const existingTicket = existingInMemory || (existingSnap?.exists() ? { id: deterministicRef.id, ...existingSnap.data() } : null);
 
     if (existingTicket) {
       await updateDoc(existingRef, ticketStatusPayload('reaberto'));
-
       const { anexo, warning } = await tryUploadTicketFile(existingRef.id, file);
-
-      if (anexo) {
-        await updateDoc(existingRef, {
-          anexo,
-          atualizadoEm: serverTimestamp()
-        });
-      }
-
-      await addSystemHistory(
-        existingRef.id,
-        observacao,
-        'reabertura',
-        anexo ? { anexo } : {}
-      );
-
-      showToast(
-        warning || 'Já existia chamado com essa chave. Reabri o mesmo chamado e incluí a nova ocorrência.',
-        warning ? 'error' : 'success'
-      );
-
+      if (anexo) await updateDoc(existingRef, { anexo, atualizadoEm: serverTimestamp() });
+      await addSystemHistory(existingRef.id, observacao, 'reabertura', anexo ? { anexo } : {});
+      showToast(warning || 'Já existia chamado com essa chave e formulário. Reabri o mesmo chamado e incluí a nova ocorrência.', warning ? 'error' : 'success');
       state.selectedTicketId = existingRef.id;
     } else {
       await setDoc(deterministicRef, {
-        tipoChamado: 'nota_fiscal',
+        tipoChamado,
         chave,
         chaveBusca,
         organizacaoId: org.id,
@@ -1027,13 +1200,7 @@ async function createTicket(event) {
       });
 
       const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, file);
-
-      if (anexo) {
-        await updateDoc(deterministicRef, {
-          anexo,
-          atualizadoEm: serverTimestamp()
-        });
-      }
+      if (anexo) await updateDoc(deterministicRef, { anexo, atualizadoEm: serverTimestamp() });
 
       await addDoc(collection(db, 'chamados', deterministicRef.id, 'historico'), {
         texto: observacao,
@@ -1046,28 +1213,133 @@ async function createTicket(event) {
       });
 
       state.selectedTicketId = deterministicRef.id;
-
-      showToast(
-        warning || 'Chamado criado com sucesso.',
-        warning ? 'error' : 'success'
-      );
+      showToast(warning || 'Chamado criado com sucesso.', warning ? 'error' : 'success');
     }
 
     els.ticketForm.reset();
     clearTicketAttachment();
     syncTicketKeyInput(false);
-
-    // Fecha o modal depois que salvar com sucesso.
     els.ticketDialog.close();
   } catch (error) {
     const message = error?.code === 'permission-denied'
       ? 'Permissão negada pelo Firestore. Publique o firestore.rules atualizado. Se estava usando anexo, crie também o Cloud Storage e publique o storage.rules.'
       : error.message;
-
     showToast(`Erro ao salvar chamado: ${message}`, 'error');
   } finally {
     els.saveTicketBtn.disabled = false;
     els.saveTicketBtn.textContent = 'Salvar chamado';
+  }
+}
+
+async function createProductTicket(event) {
+  event.preventDefault();
+
+  const tipoChamado = els.productTypeInput?.value || 'reativacao_produtos';
+  const codigoProduto = normalizeProductCode(els.productCodeInput.value);
+  const observacao = normalizeKey(els.productObsInput.value);
+  const file = state.pendingProductFile || els.productFileInput?.files?.[0] || null;
+
+  if (!isProductTicketType(tipoChamado)) {
+    return showToast('Este formulário de produto ainda não está configurado.', 'error');
+  }
+
+  if (!codigoProduto) {
+    els.productCodeInput.focus();
+    return showToast('Informe o código do produto.', 'error');
+  }
+
+  if (!observacao) {
+    els.productObsInput.focus();
+    return showToast('Preencha a observação inicial.', 'error');
+  }
+
+  let org;
+  if (isOperatorOrAdmin()) {
+    org = state.orgs.find((item) => item.id === els.productOrgSelect.value);
+  } else {
+    org = { id: state.profile.organizacaoId, nome: state.profile.organizacaoNome };
+  }
+
+  if (!org?.id) return showToast('Selecione uma organização.', 'error');
+
+  els.saveProductTicketBtn.disabled = true;
+  els.saveProductTicketBtn.textContent = 'Salvando...';
+
+  try {
+    const chave = codigoProduto;
+    const chaveBusca = `${tipoChamado}:${keySearchValue(codigoProduto)}`;
+    const deterministicRef = doc(db, 'chamados', ticketDocId(org.id, chaveBusca));
+
+    const existingInMemory = state.tickets.find((ticket) => (
+      ticket.organizacaoId === org.id
+      && (ticket.chaveBusca === chaveBusca || `${ticket.tipoChamado}:${keySearchValue(ticket.codigoProduto || ticket.chave)}` === chaveBusca)
+    ));
+
+    let existingSnap = null;
+    if (!existingInMemory) {
+      try {
+        existingSnap = await getDoc(deterministicRef);
+      } catch (error) {
+        if (error?.code !== 'permission-denied') throw error;
+        console.warn('Consulta prévia do chamado foi negada; tentando salvar direto.', error);
+      }
+    }
+
+    const existingRef = existingInMemory ? doc(db, 'chamados', existingInMemory.id) : deterministicRef;
+    const existingTicket = existingInMemory || (existingSnap?.exists() ? { id: deterministicRef.id, ...existingSnap.data() } : null);
+
+    if (existingTicket) {
+      await updateDoc(existingRef, ticketStatusPayload('reaberto'));
+      const { anexo, warning } = await tryUploadTicketFile(existingRef.id, file);
+      if (anexo) await updateDoc(existingRef, { anexo, atualizadoEm: serverTimestamp() });
+      await addSystemHistory(existingRef.id, observacao, 'reabertura', anexo ? { anexo } : {});
+      showToast(warning || 'Já existia chamado desse produto para este formulário. Reabri e incluí a nova ocorrência.', warning ? 'error' : 'success');
+      state.selectedTicketId = existingRef.id;
+    } else {
+      await setDoc(deterministicRef, {
+        tipoChamado,
+        chave,
+        chaveBusca,
+        codigoProduto,
+        organizacaoId: org.id,
+        organizacaoNome: org.nome,
+        status: 'aberto',
+        criadoPor: state.user.uid,
+        criadoPorNome: selectedUserName(),
+        criadoPorEmail: state.user.email,
+        criadoEm: serverTimestamp(),
+        atualizadoEm: serverTimestamp()
+      });
+
+      const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, file);
+      if (anexo) await updateDoc(deterministicRef, { anexo, atualizadoEm: serverTimestamp() });
+
+      await addDoc(collection(db, 'chamados', deterministicRef.id, 'historico'), {
+        texto: observacao,
+        tipo: 'criacao',
+        usuarioId: state.user.uid,
+        usuarioNome: selectedUserName(),
+        usuarioEmail: state.user.email,
+        criadoEm: serverTimestamp(),
+        ...(anexo ? { anexo } : {})
+      });
+
+      state.selectedTicketId = deterministicRef.id;
+      showToast(warning || 'Chamado de produto criado com sucesso.', warning ? 'error' : 'success');
+    }
+
+    els.productTicketForm.reset();
+    clearProductAttachment();
+    updateProductObsPreview();
+    els.productTicketDialog.close();
+  } catch (error) {
+    const message = error?.code === 'permission-denied'
+      ? 'Permissão negada pelo Firestore. Publique o firestore.rules atualizado.'
+      : error.message;
+    showToast(`Erro ao salvar chamado: ${message}`, 'error');
+  } finally {
+    els.saveProductTicketBtn.disabled = false;
+    els.saveProductTicketBtn.textContent = 'Salvar chamado';
   }
 }
 
@@ -1078,6 +1350,7 @@ function renderApp() {
   els.adminPanel?.classList.toggle('hidden', true);
   els.orgFilterWrap.classList.toggle('hidden', !isOperatorOrAdmin());
   els.ticketOrgWrap?.classList.toggle('hidden', !isOperatorOrAdmin());
+  els.productOrgWrap?.classList.toggle('hidden', !isOperatorOrAdmin());
   showOnly(els.appView);
   renderOrgSelects();
   startTicketsListener();
@@ -1518,6 +1791,37 @@ function clearTicketAttachment() {
   if (els.clearTicketFileBtn) els.clearTicketFileBtn.classList.add('hidden');
 }
 
+
+function setProductAttachment(file) {
+  if (!file) return;
+  state.pendingProductFile = file;
+
+  if (els.productPasteZone) els.productPasteZone.classList.add('has-file');
+
+  if (els.productPastePreview) {
+    const sizeKb = file.size ? `${Math.round(file.size / 1024)} KB` : '';
+    const isImage = file.type?.startsWith('image/');
+    els.productPastePreview.innerHTML = `
+      ${isImage ? `<img src="${URL.createObjectURL(file)}" alt="Prévia do anexo" />` : ''}
+      <div><strong>${escapeHtml(file.name || 'imagem-colada.png')}</strong><br><small>${escapeHtml(file.type || 'arquivo')} ${escapeHtml(sizeKb)}</small></div>
+    `;
+    els.productPastePreview.classList.remove('hidden');
+  }
+
+  if (els.clearProductFileBtn) els.clearProductFileBtn.classList.remove('hidden');
+}
+
+function clearProductAttachment() {
+  state.pendingProductFile = null;
+  if (els.productFileInput) els.productFileInput.value = '';
+  if (els.productPasteZone) els.productPasteZone.classList.remove('has-file');
+  if (els.productPastePreview) {
+    els.productPastePreview.innerHTML = '';
+    els.productPastePreview.classList.add('hidden');
+  }
+  if (els.clearProductFileBtn) els.clearProductFileBtn.classList.add('hidden');
+}
+
 function setHistoryAttachment(file) {
   if (!file) return;
   state.pendingHistoryFile = file;
@@ -1593,6 +1897,37 @@ function setupPasteZone() {
     els.ticketPasteZone.classList.remove('drag-over');
     const file = event.dataTransfer?.files?.[0];
     if (file) setTicketAttachment(file);
+  });
+}
+
+
+function setupProductPasteZone() {
+  if (!els.productPasteZone || !els.productFileInput) return;
+
+  els.productPasteZone.addEventListener('click', () => els.productFileInput.click());
+  els.productFileInput.addEventListener('change', () => setProductAttachment(els.productFileInput.files?.[0]));
+  els.clearProductFileBtn?.addEventListener('click', clearProductAttachment);
+
+  els.productPasteZone.addEventListener('paste', (event) => {
+    const file = firstImageFromClipboard(event);
+    if (!file) return;
+    event.preventDefault();
+    setProductAttachment(file);
+    showToast('Imagem colada no anexo.', 'success');
+  });
+
+  els.productPasteZone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    els.productPasteZone.classList.add('drag-over');
+  });
+
+  els.productPasteZone.addEventListener('dragleave', () => els.productPasteZone.classList.remove('drag-over'));
+
+  els.productPasteZone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    els.productPasteZone.classList.remove('drag-over');
+    const file = event.dataTransfer?.files?.[0];
+    if (file) setProductAttachment(file);
   });
 }
 
@@ -1693,23 +2028,34 @@ els.newTicketBtn.addEventListener('click', () => {
   els.ticketTypeDialog.showModal();
 });
 
-els.chooseInvoiceTicketBtn?.addEventListener('click', () => {
+function openInvoiceForm(tipoChamado) {
   els.ticketTypeDialog.close();
-
   els.ticketForm.reset();
   clearTicketAttachment();
-
-  if (els.ticketTypeInput) els.ticketTypeInput.value = 'nota_fiscal';
-  if (els.ticketDialogTitle) els.ticketDialogTitle.textContent = 'Novo chamado • Nota fiscal';
-
+  if (els.ticketTypeInput) els.ticketTypeInput.value = tipoChamado;
+  if (els.ticketDialogTitle) els.ticketDialogTitle.textContent = `Novo chamado • ${ticketTypeLabel(tipoChamado)}`;
   syncTicketKeyInput(false);
-
   els.ticketDialog.showModal();
+  window.setTimeout(() => els.ticketKeyInput?.focus(), 50);
+}
 
-  window.setTimeout(() => {
-    els.ticketKeyInput?.focus();
-  }, 50);
-});
+function openProductForm(tipoChamado) {
+  els.ticketTypeDialog.close();
+  els.productTicketForm?.reset();
+  clearProductAttachment();
+  updateProductObsPreview();
+  if (els.productTypeInput) els.productTypeInput.value = tipoChamado;
+  if (els.productDialogTitle) els.productDialogTitle.textContent = `Novo chamado • ${ticketTypeLabel(tipoChamado)}`;
+  els.productTicketDialog?.showModal();
+  window.setTimeout(() => els.productCodeInput?.focus(), 50);
+}
+
+els.chooseInvoiceTruckBtn?.addEventListener('click', () => openInvoiceForm('nf_caminhao_porta'));
+els.chooseInvoiceAdvanceBtn?.addEventListener('click', () => openInvoiceForm('nf_adiantamento'));
+els.chooseProductReactivationBtn?.addEventListener('click', () => openProductForm('reativacao_produtos'));
+els.chooseNewProductBtn?.addEventListener('click', () => openProductForm('novos_produtos'));
+els.choosePedidoAndamentoBtn?.addEventListener('click', () => openProductForm('pedido_em_andamento'));
+els.chooseDivergenciaFlowBtn?.addEventListener('click', () => openProductForm('divergencia_flow'));
 
 els.chooseOtherTicketBtn?.addEventListener('click', () => {
   els.ticketTypeDialog.close();
@@ -1722,6 +2068,8 @@ els.otherTicketForm?.addEventListener('submit', (event) => {
 });
 
 els.ticketForm.addEventListener('submit', createTicket);
+els.productTicketForm?.addEventListener('submit', createProductTicket);
+els.productObsInput?.addEventListener('input', updateProductObsPreview);
 els.adminBtn.addEventListener('click', () => {
   ensureReportDates();
   renderAdmin();
@@ -1731,9 +2079,9 @@ els.orgForm.addEventListener('submit', createOrg);
 els.operatorReportBtn?.addEventListener('click', generateOperatorReport);
 els.quickOrgForm?.addEventListener('submit', createOrg);
 els.searchInput.addEventListener('input', renderTickets);
-els.ticketTypeFilter?.addEventListener('change', renderTickets);
+els.ticketTypeFilter?.addEventListener('change', handleTicketTypeFilterChange);
 els.statusFilter.addEventListener('change', renderTickets);
-els.orgFilter.addEventListener('change', renderTickets);
+els.orgFilter.addEventListener('change', handleOrgFilterChange);
 
 els.ticketKeyInput?.addEventListener('input', () => {
   syncTicketKeyInput(false);
@@ -1770,13 +2118,23 @@ document.addEventListener('change', (event) => {
 });
 
 document.addEventListener('paste', (event) => {
-  if (!els.ticketDialog?.open) return;
   const file = firstImageFromClipboard(event);
   if (!file) return;
-  event.preventDefault();
-  setTicketAttachment(file);
-  showToast('Imagem colada no anexo.', 'success');
+
+  if (els.ticketDialog?.open) {
+    event.preventDefault();
+    setTicketAttachment(file);
+    showToast('Imagem colada no anexo.', 'success');
+    return;
+  }
+
+  if (els.productTicketDialog?.open) {
+    event.preventDefault();
+    setProductAttachment(file);
+    showToast('Imagem colada no anexo.', 'success');
+  }
 });
 
 setupPasteZone();
+setupProductPasteZone();
 setAuthMode('login');
