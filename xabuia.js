@@ -1,15 +1,25 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk Caminhão na Porta
 // @namespace    xabuia/infradesk
-// @version      1.0.0
-// @description  Abre ocorrência Xabuia direto nos cards de NF do Infradesk.
+// @version      1.4.0
+// @description  Abre e acompanha ocorrências Xabuia direto nos cards de NF do Infradesk.
+// @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados/painel*
 // @run-at       document-end
+// @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
+// @homepageURL  https://chamadossicofe-design.github.io/xabuia/
+// @supportURL   https://github.com/chamadossicofe-design/xabuia/issues
+// @updateURL    https://raw.githubusercontent.com/chamadossicofe-design/xabuia/main/xabuia.js
+// @downloadURL  https://raw.githubusercontent.com/chamadossicofe-design/xabuia/main/xabuia.js
 // @grant        GM_addStyle
-// @connect      firebasestorage.googleapis.com
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
 // @connect      firestore.googleapis.com
 // @connect      identitytoolkit.googleapis.com
 // @connect      securetoken.googleapis.com
+// @connect      www.googleapis.com
+// @connect      chamadossicofe-design.github.io
 // ==/UserScript==
 
 (function () {
