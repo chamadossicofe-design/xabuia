@@ -44,14 +44,25 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V10';
+const APP_VERSION = 'V11';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
+
+const TICKET_TYPE_LABELS = {
+  nota_fiscal: 'Nota fiscal',
+  outras: 'Outras'
+};
+
 const STATUS_LABELS = {
   aberto: 'Aberto',
   reaberto: 'Reaberto',
   em_tratamento: 'Em tratamento',
+  informacoes_divergentes: 'Informações divergentes',
+  devolver_recusar: 'Devolver e recusar',
   finalizado: 'Finalizado'
 };
+
+const ACTIVE_STATUSES = ['aberto', 'reaberto', 'em_tratamento'];
+const CLOSED_STATUSES = ['finalizado', 'informacoes_divergentes', 'devolver_recusar'];
 
 const HISTORY_TYPE_LABELS = {
   criacao: 'Criação',
@@ -64,7 +75,9 @@ const HISTORY_TYPE_LABELS = {
   tratativa: 'Tratativa',
   anexo: 'Anexo',
   status: 'Status',
-  reabertura: 'Reabertura'
+  reabertura: 'Reabertura',
+  informacoes_divergentes: 'Informações divergentes',
+  devolver_recusar: 'Devolver e recusar'
 };
 
 const app = initializeApp(firebaseConfig);
@@ -108,29 +121,42 @@ const els = {
   adminBtn: $('adminBtn'),
   logoutBtn: $('logoutBtn'),
   searchInput: $('searchInput'),
+  ticketTypeFilter: $('ticketTypeFilter'),
   statusFilter: $('statusFilter'),
   orgFilterWrap: $('orgFilterWrap'),
   orgFilter: $('orgFilter'),
   countAberto: $('countAberto'),
   countReaberto: $('countReaberto'),
   countTratamento: $('countTratamento'),
+  countInformacoesDivergentes: $('countInformacoesDivergentes'),
+  countDevolverRecusar: $('countDevolverRecusar'),
   countFinalizado: $('countFinalizado'),
   countTotal: $('countTotal'),
   liveStatus: $('liveStatus'),
   ticketList: $('ticketList'),
   ticketDetail: $('ticketDetail'),
+  ticketTypeDialog: $('ticketTypeDialog'),
+  chooseInvoiceTicketBtn: $('chooseInvoiceTicketBtn'),
+  chooseOtherTicketBtn: $('chooseOtherTicketBtn'),
   ticketDialog: $('ticketDialog'),
   ticketForm: $('ticketForm'),
+  ticketDialogTitle: $('ticketDialogTitle'),
+  ticketTypeInput: $('ticketTypeInput'),
   ticketKeyInput: $('ticketKeyInput'),
+  ticketKeyHelp: $('ticketKeyHelp'),
+  ticketKeyError: $('ticketKeyError'),
+  ticketKeyPreview: $('ticketKeyPreview'),
+  ticketKeyCleanText: $('ticketKeyCleanText'),
   ticketOrgWrap: $('ticketOrgWrap'),
   ticketOrgSelect: $('ticketOrgSelect'),
   ticketObsInput: $('ticketObsInput'),
-  ticketTypeSelect: $('ticketTypeSelect'),
   ticketFileInput: $('ticketFileInput'),
   ticketPasteZone: $('ticketPasteZone'),
   ticketPastePreview: $('ticketPastePreview'),
   clearTicketFileBtn: $('clearTicketFileBtn'),
   saveTicketBtn: $('saveTicketBtn'),
+  otherTicketDialog: $('otherTicketDialog'),
+  otherTicketForm: $('otherTicketForm'),
   adminDialog: $('adminDialog'),
   orgForm: $('orgForm'),
   orgNameInput: $('orgNameInput'),
@@ -203,6 +229,42 @@ function normalizeKey(value) {
 
 function digitsOnly(value) {
   return String(value || '').replace(/\D+/g, '');
+}
+
+function limparChaveNfe(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 44);
+}
+
+function chaveNfeValida(value) {
+  return limparChaveNfe(value).length === 44;
+}
+
+function syncTicketKeyInput(showError = false) {
+  if (!els.ticketKeyInput) return '';
+
+  const clean = limparChaveNfe(els.ticketKeyInput.value);
+
+  if (els.ticketKeyInput.value !== clean) {
+    els.ticketKeyInput.value = clean;
+  }
+
+  if (els.ticketKeyCleanText) {
+    els.ticketKeyCleanText.textContent = clean || '—';
+  }
+
+  if (els.ticketKeyPreview) {
+    els.ticketKeyPreview.classList.toggle('hidden', !clean);
+  }
+
+  const invalid = showError && clean.length !== 44;
+
+  if (els.ticketKeyError) {
+    els.ticketKeyError.classList.toggle('hidden', !invalid);
+  }
+
+  els.ticketKeyInput.classList.toggle('invalid', invalid);
+
+  return clean;
 }
 
 function keySearchValue(value) {
@@ -476,24 +538,34 @@ function startTicketsListener() {
   setText(els.liveStatus, 'Atualizando...');
 
   if (isAdmin()) {
-    state.unsubTickets = [listenTicketBucket('admin', query(collection(db, 'chamados')))];
-    return;
-  }
-
-  if (state.profile?.papel === 'operador') {
-    // Operador vê a fila geral aberta/reaberta/finalizada e, dos chamados em tratamento,
-    // somente aqueles que ele mesmo colocou em tratamento. A tela começa filtrada só nos ativos.
     state.unsubTickets = [
-      listenTicketBucket('fila', query(collection(db, 'chamados'), where('status', 'in', ['aberto', 'reaberto', 'finalizado']))),
-      listenTicketBucket('meus', query(collection(db, 'chamados'), where('operadorTratamentoId', '==', state.user.uid)))
+      listenTicketBucket('admin', query(collection(db, 'chamados')))
     ];
     return;
   }
 
-  // Usuário comum vê sua organização. O filtro padrão mostra só ativos e limita em 20 na tela;
-  // ao pesquisar ou trocar o filtro, consegue localizar chamados antigos da organização.
+  if (state.profile?.papel === 'operador') {
+    // Regra do operador:
+    // vê abertos e reabertos da fila geral;
+    // vê "em tratamento" somente quando ele mesmo está tratando.
+    state.unsubTickets = [
+      listenTicketBucket(
+        'fila',
+        query(collection(db, 'chamados'), where('status', 'in', ['aberto', 'reaberto']))
+      ),
+      listenTicketBucket(
+        'meus',
+        query(collection(db, 'chamados'), where('operadorTratamentoId', '==', state.user.uid))
+      )
+    ];
+    return;
+  }
+
   state.unsubTickets = [
-    listenTicketBucket('org', query(collection(db, 'chamados'), where('organizacaoId', '==', state.profile.organizacaoId)))
+    listenTicketBucket(
+      'org',
+      query(collection(db, 'chamados'), where('organizacaoId', '==', state.profile.organizacaoId))
+    )
   ];
 }
 
@@ -502,13 +574,21 @@ function filteredTickets() {
   const search = searchRaw.toLowerCase();
   const searchDigits = digitsOnly(searchRaw);
   const status = els.statusFilter.value || 'ativos';
+  const tipoChamado = els.ticketTypeFilter?.value || 'todos';
   const orgId = els.orgFilter.value;
-  const activeStatuses = ['aberto', 'reaberto', 'em_tratamento'];
 
   let tickets = state.tickets.filter((ticket) => {
-    if (status === 'ativos' && !activeStatuses.includes(ticket.status || 'aberto')) return false;
-    if (status !== 'todos' && status !== 'ativos' && ticket.status !== status) return false;
-    if (isOperatorOrAdmin() && orgId && orgId !== 'todas' && ticket.organizacaoId !== orgId) return false;
+    const ticketStatus = ticket.status || 'aberto';
+    const ticketTipo = ticket.tipoChamado || 'nota_fiscal';
+
+    if (status === 'ativos' && !ACTIVE_STATUSES.includes(ticketStatus)) return false;
+    if (status !== 'todos' && status !== 'ativos' && ticketStatus !== status) return false;
+
+    if (tipoChamado !== 'todos' && ticketTipo !== tipoChamado) return false;
+
+    if (isOperatorOrAdmin() && orgId && orgId !== 'todas' && ticket.organizacaoId !== orgId) {
+      return false;
+    }
 
     if (search) {
       const chave = String(ticket.chave || '').toLowerCase();
@@ -541,6 +621,8 @@ function renderTickets() {
   setText(els.countAberto, counts.aberto || 0);
   setText(els.countReaberto, counts.reaberto || 0);
   setText(els.countTratamento, counts.em_tratamento || 0);
+  setText(els.countInformacoesDivergentes, counts.informacoes_divergentes || 0);
+  setText(els.countDevolverRecusar, counts.devolver_recusar || 0);
   setText(els.countFinalizado, counts.finalizado || 0);
   setText(els.countTotal, tickets.length);
 
@@ -561,6 +643,8 @@ function renderTickets() {
       </div>
       <div class="ticket-raw-key">${escapeHtml(ticket.chave)}</div>
       <div class="ticket-meta">
+        <span>${escapeHtml(TICKET_TYPE_LABELS[ticket.tipoChamado || 'nota_fiscal'] || 'Chamado')}</span>
+        <span>•</span>
         <span>${escapeHtml(ticket.organizacaoNome || 'Sem organização')}</span>
         <span>•</span>
         <span>Criado por ${escapeHtml(ticket.criadoPorNome || ticket.criadoPorEmail || '—')}</span>
@@ -602,7 +686,7 @@ async function renderTicketDetail(ticket) {
     <div class="section-head detail-head">
       <div>
         <h2 class="detail-title">${escapeHtml(compactKeyTitle(ticket.chave))}</h2>
-        <p class="muted">${escapeHtml(ticket.organizacaoNome || 'Sem organização')} • Atualizado ${formatDate(ticket.atualizadoEm)}</p>
+        <p class="muted">${escapeHtml(TICKET_TYPE_LABELS[ticket.tipoChamado || 'nota_fiscal'] || 'Chamado')} • ${escapeHtml(ticket.organizacaoNome || 'Sem organização')} • Atualizado ${formatDate(ticket.atualizadoEm)}</p>
         ${assignedLine}
       </div>
       ${statusBadge(ticket.status)}
@@ -620,11 +704,13 @@ async function renderTicketDetail(ticket) {
             <option value="aberto">Aberto</option>
             <option value="reaberto">Reaberto</option>
             <option value="em_tratamento">Em tratamento</option>
+            <option value="informacoes_divergentes">Informações divergentes</option>
+            <option value="devolver_recusar">Devolver e recusar</option>
             <option value="finalizado">Finalizado</option>
           </select>
         </label>
       ` : ''}
-      ${ticket.status === 'finalizado' ? `<button id="reopenTicketBtn" class="btn ghost" type="button">Reabrir chamado</button>` : ''}
+      ${CLOSED_STATUSES.includes(ticket.status) ? `<button id="reopenTicketBtn" class="btn ghost" type="button">Reabrir chamado</button>` : ''}
       <label class="field grow">
         <span>Nova ocorrência</span>
         <textarea id="newHistoryText" rows="3" placeholder="Digite uma nova ocorrência"></textarea>
@@ -794,6 +880,20 @@ function ticketStatusPayload(status) {
     payload.finalizadoEm = serverTimestamp();
   }
 
+  if (status === 'informacoes_divergentes') {
+    payload.informacoesDivergentesPor = state.user.uid;
+    payload.informacoesDivergentesPorNome = selectedUserName();
+    payload.informacoesDivergentesPorEmail = state.user.email;
+    payload.informacoesDivergentesEm = serverTimestamp();
+  }
+
+  if (status === 'devolver_recusar') {
+    payload.devolverRecusarPor = state.user.uid;
+    payload.devolverRecusarPorNome = selectedUserName();
+    payload.devolverRecusarPorEmail = state.user.email;
+    payload.devolverRecusarEm = serverTimestamp();
+  }
+
   if (status === 'reaberto') {
     payload.reabertoPor = state.user.uid;
     payload.reabertoPorNome = selectedUserName();
@@ -821,19 +921,39 @@ async function updateTicketStatus(ticket, status) {
 
 async function createTicket(event) {
   event.preventDefault();
-  const chave = normalizeKey(els.ticketKeyInput.value);
+
+  const tipoChamado = els.ticketTypeInput?.value || 'nota_fiscal';
+  const chave = limparChaveNfe(els.ticketKeyInput.value);
   const observacao = normalizeKey(els.ticketObsInput.value);
-  const tipo = els.ticketTypeSelect?.value || 'criacao';
+  const tipoHistorico = 'criacao';
   const file = state.pendingTicketFile || els.ticketFileInput.files?.[0] || null;
 
-  if (!chave || !observacao) return showToast('Preencha chave e ocorrência.', 'error');
+  syncTicketKeyInput(true);
+
+  if (tipoChamado !== 'nota_fiscal') {
+    return showToast('Este tipo de chamado ainda está em construção.', 'error');
+  }
+
+  if (!chaveNfeValida(chave)) {
+    els.ticketKeyInput.focus();
+    return showToast('Chave de acesso inválida. Informe exatamente 44 números.', 'error');
+  }
+
+  if (!observacao) {
+    els.ticketObsInput.focus();
+    return showToast('Preencha a observação inicial.', 'error');
+  }
 
   let org;
   if (isOperatorOrAdmin()) {
     org = state.orgs.find((item) => item.id === els.ticketOrgSelect.value);
   } else {
-    org = { id: state.profile.organizacaoId, nome: state.profile.organizacaoNome };
+    org = {
+      id: state.profile.organizacaoId,
+      nome: state.profile.organizacaoNome
+    };
   }
+
   if (!org?.id) return showToast('Selecione uma organização.', 'error');
 
   els.saveTicketBtn.disabled = true;
@@ -842,12 +962,14 @@ async function createTicket(event) {
   try {
     const chaveBusca = keySearchValue(chave);
     const deterministicRef = doc(db, 'chamados', ticketDocId(org.id, chaveBusca));
+
     const existingInMemory = state.tickets.find((ticket) => (
       ticket.organizacaoId === org.id
       && (ticket.chaveBusca === chaveBusca || keySearchValue(ticket.chave) === chaveBusca)
     ));
 
     let existingSnap = null;
+
     if (!existingInMemory) {
       try {
         existingSnap = await getDoc(deterministicRef);
@@ -860,21 +982,38 @@ async function createTicket(event) {
     }
 
     const existingRef = existingInMemory ? doc(db, 'chamados', existingInMemory.id) : deterministicRef;
-    const existingTicket = existingInMemory || (existingSnap?.exists() ? { id: deterministicRef.id, ...existingSnap.data() } : null);
+    const existingTicket = existingInMemory || (
+      existingSnap?.exists() ? { id: deterministicRef.id, ...existingSnap.data() } : null
+    );
 
     if (existingTicket) {
       await updateDoc(existingRef, ticketStatusPayload('reaberto'));
 
       const { anexo, warning } = await tryUploadTicketFile(existingRef.id, file);
+
       if (anexo) {
-        await updateDoc(existingRef, { anexo, atualizadoEm: serverTimestamp() });
+        await updateDoc(existingRef, {
+          anexo,
+          atualizadoEm: serverTimestamp()
+        });
       }
 
-      await addSystemHistory(existingRef.id, observacao, 'reabertura', anexo ? { anexo } : {});
-      showToast(warning || 'Já existia chamado com essa chave. Reabri o mesmo chamado e incluí a nova ocorrência.', warning ? 'error' : 'success');
+      await addSystemHistory(
+        existingRef.id,
+        observacao,
+        'reabertura',
+        anexo ? { anexo } : {}
+      );
+
+      showToast(
+        warning || 'Já existia chamado com essa chave. Reabri o mesmo chamado e incluí a nova ocorrência.',
+        warning ? 'error' : 'success'
+      );
+
       state.selectedTicketId = existingRef.id;
     } else {
       await setDoc(deterministicRef, {
+        tipoChamado: 'nota_fiscal',
         chave,
         chaveBusca,
         organizacaoId: org.id,
@@ -888,6 +1027,7 @@ async function createTicket(event) {
       });
 
       const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, file);
+
       if (anexo) {
         await updateDoc(deterministicRef, {
           anexo,
@@ -897,7 +1037,7 @@ async function createTicket(event) {
 
       await addDoc(collection(db, 'chamados', deterministicRef.id, 'historico'), {
         texto: observacao,
-        tipo,
+        tipo: tipoHistorico,
         usuarioId: state.user.uid,
         usuarioNome: selectedUserName(),
         usuarioEmail: state.user.email,
@@ -906,16 +1046,24 @@ async function createTicket(event) {
       });
 
       state.selectedTicketId = deterministicRef.id;
-      showToast(warning || 'Chamado criado com sucesso.', warning ? 'error' : 'success');
+
+      showToast(
+        warning || 'Chamado criado com sucesso.',
+        warning ? 'error' : 'success'
+      );
     }
 
     els.ticketForm.reset();
     clearTicketAttachment();
+    syncTicketKeyInput(false);
+
+    // Fecha o modal depois que salvar com sucesso.
     els.ticketDialog.close();
   } catch (error) {
     const message = error?.code === 'permission-denied'
-      ? 'Permissão negada pelo Firestore. Publique o firestore.rules da V10. Se estava usando anexo, crie também o Cloud Storage e publique o storage.rules.'
+      ? 'Permissão negada pelo Firestore. Publique o firestore.rules atualizado. Se estava usando anexo, crie também o Cloud Storage e publique o storage.rules.'
       : error.message;
+
     showToast(`Erro ao salvar chamado: ${message}`, 'error');
   } finally {
     els.saveTicketBtn.disabled = false;
@@ -1059,7 +1207,9 @@ function generateOperatorReport() {
         email: email || '',
         iniciados: 0,
         finalizados: 0,
-        reabertos: 0
+        reabertos: 0,
+        divergentes: 0,
+        devolvidos: 0
       });
     }
     return rows.get(key);
@@ -1082,10 +1232,29 @@ function generateOperatorReport() {
     if (ticket.reabertoEm && inRange(ticket.reabertoEm)) {
       ensure(ticket.reabertoPor, ticket.reabertoPorNome, ticket.reabertoPorEmail).reabertos += 1;
     }
+
+    if (ticket.informacoesDivergentesEm && inRange(ticket.informacoesDivergentesEm)) {
+      ensure(
+        ticket.informacoesDivergentesPor,
+        ticket.informacoesDivergentesPorNome,
+        ticket.informacoesDivergentesPorEmail
+      ).divergentes += 1;
+    }
+
+    if (ticket.devolverRecusarEm && inRange(ticket.devolverRecusarEm)) {
+      ensure(
+        ticket.devolverRecusarPor,
+        ticket.devolverRecusarPorNome,
+        ticket.devolverRecusarPorEmail
+      ).devolvidos += 1;
+    }
   });
 
   const data = [...rows.values()]
-    .map((row) => ({ ...row, total: row.iniciados + row.finalizados + row.reabertos }))
+    .map((row) => ({
+      ...row,
+      total: row.iniciados + row.finalizados + row.reabertos + row.divergentes + row.devolvidos
+    }))
     .filter((row) => row.total > 0)
     .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'));
 
@@ -1103,6 +1272,8 @@ function generateOperatorReport() {
             <th>Em tratamento</th>
             <th>Finalizados</th>
             <th>Reabertos</th>
+            <th>Divergentes</th>
+            <th>Devolver/recusar</th>
             <th>Total</th>
           </tr>
         </thead>
@@ -1113,6 +1284,8 @@ function generateOperatorReport() {
               <td>${row.iniciados}</td>
               <td>${row.finalizados}</td>
               <td>${row.reabertos}</td>
+              <td>${row.divergentes}</td>
+              <td>${row.devolvidos}</td>
               <td><strong>${row.total}</strong></td>
             </tr>
           `).join('')}
@@ -1517,10 +1690,37 @@ els.logoutOnboardingBtn.addEventListener('click', logout);
 els.logoutBlockedBtn.addEventListener('click', logout);
 els.onboardingForm.addEventListener('submit', completeOnboarding);
 els.newTicketBtn.addEventListener('click', () => {
+  els.ticketTypeDialog.showModal();
+});
+
+els.chooseInvoiceTicketBtn?.addEventListener('click', () => {
+  els.ticketTypeDialog.close();
+
   els.ticketForm.reset();
   clearTicketAttachment();
+
+  if (els.ticketTypeInput) els.ticketTypeInput.value = 'nota_fiscal';
+  if (els.ticketDialogTitle) els.ticketDialogTitle.textContent = 'Novo chamado • Nota fiscal';
+
+  syncTicketKeyInput(false);
+
   els.ticketDialog.showModal();
+
+  window.setTimeout(() => {
+    els.ticketKeyInput?.focus();
+  }, 50);
 });
+
+els.chooseOtherTicketBtn?.addEventListener('click', () => {
+  els.ticketTypeDialog.close();
+  els.otherTicketDialog?.showModal();
+});
+
+els.otherTicketForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  showToast('O formulário Outras ainda está em construção.', 'error');
+});
+
 els.ticketForm.addEventListener('submit', createTicket);
 els.adminBtn.addEventListener('click', () => {
   ensureReportDates();
@@ -1531,8 +1731,21 @@ els.orgForm.addEventListener('submit', createOrg);
 els.operatorReportBtn?.addEventListener('click', generateOperatorReport);
 els.quickOrgForm?.addEventListener('submit', createOrg);
 els.searchInput.addEventListener('input', renderTickets);
+els.ticketTypeFilter?.addEventListener('change', renderTickets);
 els.statusFilter.addEventListener('change', renderTickets);
 els.orgFilter.addEventListener('change', renderTickets);
+
+els.ticketKeyInput?.addEventListener('input', () => {
+  syncTicketKeyInput(false);
+});
+
+els.ticketKeyInput?.addEventListener('paste', () => {
+  window.setTimeout(() => syncTicketKeyInput(false), 0);
+});
+
+els.ticketKeyInput?.addEventListener('blur', () => {
+  syncTicketKeyInput(true);
+});
 
 document.addEventListener('click', (event) => {
   const closeId = event.target?.dataset?.closeDialog;
