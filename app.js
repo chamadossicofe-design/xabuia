@@ -847,34 +847,41 @@ function startTicketsListener() {
   stopTicketsListener();
   setText(els.liveStatus, 'Atualizando...');
 
-  if (isAdmin()) {
-    state.unsubTickets = [
-      listenTicketBucket('admin', query(collection(db, 'chamados')))
-    ];
-    return;
-  }
+  const chamadosRef = collection(db, 'chamados');
+  const filaAbertaReaberta = ['aberto', 'reaberto'];
 
-  if (state.profile?.papel === 'operador') {
-    // Regra do operador:
-    // vê abertos e reabertos da fila geral;
-    // vê "em tratamento" somente quando ele mesmo está tratando.
+  // Página principal leve:
+  // - carrega somente chamados abertos/reabertos da fila;
+  // - carrega "em tratamento" somente quando pertence ao usuário logado;
+  // - não carrega finalizados, divergentes ou devolver/recusar na abertura da tela.
+  if (isOperatorOrAdmin()) {
     state.unsubTickets = [
       listenTicketBucket(
-        'fila',
-        query(collection(db, 'chamados'), where('status', 'in', ['aberto', 'reaberto']))
+        'fila_aberta_reaberta',
+        query(chamadosRef, where('status', 'in', filaAbertaReaberta))
       ),
       listenTicketBucket(
-        'meus',
-        query(collection(db, 'chamados'), where('operadorTratamentoId', '==', state.user.uid))
+        'meus_em_tratamento',
+        query(
+          chamadosRef,
+          where('status', '==', 'em_tratamento'),
+          where('operadorTratamentoId', '==', state.user.uid)
+        )
       )
     ];
     return;
   }
 
+  // Usuário comum: vê apenas chamados abertos/reabertos da própria organização.
+  // Chamados em tratamento por operadores não entram na carga inicial desta página.
   state.unsubTickets = [
     listenTicketBucket(
-      'org',
-      query(collection(db, 'chamados'), where('organizacaoId', '==', state.profile.organizacaoId))
+      'minha_org_abertos_reabertos',
+      query(
+        chamadosRef,
+        where('organizacaoId', '==', state.profile.organizacaoId),
+        where('status', 'in', filaAbertaReaberta)
+      )
     )
   ];
 }
