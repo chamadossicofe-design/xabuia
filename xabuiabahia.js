@@ -9,8 +9,8 @@
 // @run-at       document-end
 // @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
 // @homepageURL  https://chamadossicofe-design.github.io/xabuia/
-// @updateURL    https://chamadossicofe-design.github.io/xabuia/xabuia.js
-// @downloadURL  https://chamadossicofe-design.github.io/xabuia/xabuia.js
+// @updateURL    https://chamadossicofe-design.github.io/xabuia/xabuiabahia.js
+// @downloadURL  https://chamadossicofe-design.github.io/xabuia/xabuiabahia.js
 // @grant        none
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
