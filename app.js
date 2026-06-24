@@ -149,6 +149,9 @@ const els = {
   statusFilter: $('statusFilter'),
   orgFilterWrap: $('orgFilterWrap'),
   orgFilter: $('orgFilter'),
+  mainDateStart: $('mainDateStart'),
+  mainDateEnd: $('mainDateEnd'),
+  clearMainDateBtn: $('clearMainDateBtn'),
   countAberto: $('countAberto'),
   countReaberto: $('countReaberto'),
   countTratamento: $('countTratamento'),
@@ -224,7 +227,9 @@ const state = {
   unsubOrgs: null,
   unsubUsers: null,
   searchTimer: null,
-  searchToken: 0
+  searchToken: 0,
+  filterTimer: null,
+  filterToken: 0
 };
 
 function showToast(message, type = 'info') {
@@ -850,17 +855,15 @@ function startTicketsListener() {
   setText(els.liveStatus, 'Atualizando...');
 
   const chamadosRef = collection(db, 'chamados');
-  const filaAbertaReaberta = ['aberto', 'reaberto'];
 
-  // Página principal leve:
-  // - carrega somente chamados abertos/reabertos da fila;
-  // - carrega "em tratamento" somente quando pertence ao usuário logado;
-  // - não carrega finalizados, divergentes ou devolver/recusar na abertura da tela.
+  // Painel inicial leve:
+  // - operador/admin: fila aberta/reaberta geral + somente os próprios em tratamento;
+  // - usuário comum: chamados ativos da própria organização, incluindo em tratamento.
   if (isOperatorOrAdmin()) {
     state.unsubTickets = [
       listenTicketBucket(
         'fila_aberta_reaberta',
-        query(chamadosRef, where('status', 'in', filaAbertaReaberta))
+        query(chamadosRef, where('status', 'in', ['aberto', 'reaberto']))
       ),
       listenTicketBucket(
         'meus_em_tratamento',
@@ -874,15 +877,13 @@ function startTicketsListener() {
     return;
   }
 
-  // Usuário comum: vê apenas chamados abertos/reabertos da própria organização.
-  // Chamados em tratamento por operadores não entram na carga inicial desta página.
   state.unsubTickets = [
     listenTicketBucket(
-      'minha_org_abertos_reabertos',
+      'minha_org_ativos',
       query(
         chamadosRef,
         where('organizacaoId', '==', state.profile.organizacaoId),
-        where('status', 'in', filaAbertaReaberta)
+        where('status', 'in', ['aberto', 'reaberto', 'em_tratamento'])
       )
     )
   ];
@@ -903,12 +904,194 @@ function clearSearchBucket() {
   }
 }
 
+function clearFilterBucket(shouldMerge = true) {
+  if (state.filterTimer) {
+    window.clearTimeout(state.filterTimer);
+    state.filterTimer = null;
+  }
+
+  if (state.ticketBuckets.filtro_remoto) {
+    delete state.ticketBuckets.filtro_remoto;
+    if (shouldMerge) mergeTicketBuckets();
+  } else if (shouldMerge) {
+    renderTickets();
+  }
+}
+
+function selectedStatusValue() {
+  return els.statusFilter?.value || 'ativos';
+}
+
+function selectedTypeValuesForQuery() {
+  const values = selectedValues(els.ticketTypeFilter, 'todos');
+  if (values.includes('todos')) return [];
+  return values.filter((type) => TICKET_TYPE_LABELS[type]);
+}
+
+function selectedOrgValuesForQuery() {
+  if (!isOperatorOrAdmin()) {
+    return state.profile?.organizacaoId ? [state.profile.organizacaoId] : [];
+  }
+
+  const selected = selectedValues(els.orgFilter, 'todas');
+  if (!selected.includes('todas')) return selected.filter(Boolean);
+  return [];
+}
+
+function dateFilterValues() {
+  return {
+    startValue: els.mainDateStart?.value || '',
+    endValue: els.mainDateEnd?.value || ''
+  };
+}
+
+function hasMainDateFilter() {
+  const dates = dateFilterValues();
+  return !!(dates.startValue || dates.endValue);
+}
+
+function localDateStartDate(value) {
+  if (!value) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, 0, 0, 0, 0);
+}
+
+function localDateEndDate(value) {
+  if (!value) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, 23, 59, 59, 999);
+}
+
+function ticketMatchesMainDateFilter(ticket) {
+  if (!hasMainDateFilter()) return true;
+  const dates = dateFilterValues();
+  const start = dates.startValue ? localDateStart(dates.startValue) : null;
+  const end = dates.endValue ? localDateEnd(dates.endValue) : null;
+  const ms = timestampMillis(ticket.criadoEm);
+  if (!ms) return false;
+  if (start != null && ms < start) return false;
+  if (end != null && ms > end) return false;
+  return true;
+}
+
+function remoteFilterStatuses() {
+  const status = selectedStatusValue();
+
+  if (status === 'ativos') return ['aberto', 'reaberto', 'em_tratamento'];
+  if (status === 'todos') return Object.keys(STATUS_LABELS);
+  if (STATUS_LABELS[status]) return [status];
+  return ['aberto', 'reaberto', 'em_tratamento'];
+}
+
+function needsRemoteFilterQuery() {
+  const status = selectedStatusValue();
+  return hasMainDateFilter()
+    || status === 'todos'
+    || ['finalizado', 'informacoes_divergentes', 'devolver_recusar'].includes(status);
+}
+
+function buildRemoteFilterQueries() {
+  const chamadosRef = collection(db, 'chamados');
+  const statuses = remoteFilterStatuses();
+  const typeValues = selectedTypeValuesForQuery();
+  const orgValues = selectedOrgValuesForQuery();
+  const dates = dateFilterValues();
+  const startDate = localDateStartDate(dates.startValue);
+  const endDate = localDateEndDate(dates.endValue);
+  const queries = [];
+  const maxQueries = 40;
+
+  const effectiveOrgValues = !isOperatorOrAdmin()
+    ? (state.profile?.organizacaoId ? [state.profile.organizacaoId] : [])
+    : (orgValues.length ? orgValues : [null]);
+
+  const effectiveTypeValues = typeValues.length ? typeValues : [null];
+
+  for (const status of statuses) {
+    for (const orgId of effectiveOrgValues) {
+      for (const tipoChamado of effectiveTypeValues) {
+        if (queries.length >= maxQueries) return queries;
+
+        const parts = [chamadosRef];
+        parts.push(where('status', '==', status));
+
+        if (orgId) parts.push(where('organizacaoId', '==', orgId));
+        if (tipoChamado) parts.push(where('tipoChamado', '==', tipoChamado));
+
+        // Pesquisa por data de abertura: usa criadoEm, assim não baixa tudo para filtrar no navegador.
+        if (startDate) parts.push(where('criadoEm', '>=', startDate));
+        if (endDate) parts.push(where('criadoEm', '<=', endDate));
+
+        parts.push(limit(hasMainDateFilter() ? 300 : 120));
+        queries.push(query(...parts));
+      }
+    }
+  }
+
+  return queries;
+}
+
+async function runRemoteFilterQuery() {
+  const token = ++state.filterToken;
+
+  if (!needsRemoteFilterQuery()) {
+    clearFilterBucket(false);
+    renderTickets();
+    setText(els.liveStatus, 'Ao vivo');
+    return;
+  }
+
+  const remoteQueries = buildRemoteFilterQueries();
+  if (!remoteQueries.length) {
+    clearFilterBucket(false);
+    renderTickets();
+    setText(els.liveStatus, 'Ao vivo');
+    return;
+  }
+
+  setText(els.liveStatus, 'Filtrando...');
+
+  try {
+    const found = new Map();
+    for (const q of remoteQueries) {
+      if (token !== state.filterToken) return;
+      const snapshot = await getDocs(q);
+      snapshot.docs.forEach((d) => {
+        found.set(d.id, { id: d.id, ...d.data() });
+      });
+    }
+
+    if (token !== state.filterToken) return;
+    state.ticketBuckets.filtro_remoto = [...found.values()];
+    mergeTicketBuckets();
+    setText(els.liveStatus, found.size ? `Filtro: ${found.size} encontrado(s)` : 'Ao vivo');
+  } catch (error) {
+    if (token !== state.filterToken) return;
+    console.error('Erro no filtro remoto:', error);
+    setText(els.liveStatus, 'Erro no filtro');
+    if (String(error?.message || '').includes('requires an index')) {
+      showToast('O Firestore pediu um índice para esse filtro. Clique no link do erro no console do navegador e crie o índice sugerido.', 'error');
+      return;
+    }
+    showToast(`Erro ao filtrar chamados: ${error.message}`, 'error');
+  }
+}
+
+function scheduleRemoteFilterQuery() {
+  if (state.filterTimer) window.clearTimeout(state.filterTimer);
+  state.filterTimer = window.setTimeout(runRemoteFilterQuery, 350);
+}
+
 function ticketTypeSearchValues() {
   const selected = selectedValues(els.ticketTypeFilter, 'todos');
   if (!selected.includes('todos')) {
     return selected.filter((type) => TICKET_TYPE_LABELS[type]);
   }
-  return Object.keys(TICKET_TYPE_LABELS);
+
+  // Inclui o tipo legado "nota_fiscal" porque versões antigas podem ter gravado a chaveBusca assim.
+  return [...Object.keys(TICKET_TYPE_LABELS), 'nota_fiscal'];
 }
 
 function orgSearchValues() {
@@ -958,7 +1141,7 @@ async function runRemoteTicketSearch(raw) {
   setText(els.liveStatus, 'Buscando...');
 
   const found = new Map();
-  const maxReads = 240;
+  const maxReads = 300;
   const lookups = [];
 
   for (const orgId of orgIds) {
@@ -980,8 +1163,6 @@ async function runRemoteTicketSearch(raw) {
           const snap = await getDoc(item.ref);
           return { item, snap };
         } catch (error) {
-          // Alguns perfis podem não ter permissão para documentos de outra organização ou outro operador.
-          // Na busca por ID determinístico, ignoramos esses casos para não quebrar a tela.
           if (error?.code !== 'permission-denied') console.warn('Busca de chamado falhou:', error);
           return null;
         }
@@ -1012,16 +1193,15 @@ async function runRemoteTicketSearch(raw) {
   }
 }
 
-function scheduleRemoteTicketSearch() {
+function refreshQueryBackedFilters() {
+  scheduleRemoteFilterQuery();
+
   const searchRaw = normalizeKey(els.searchInput.value);
-
-  renderTickets();
-
   if (state.searchTimer) window.clearTimeout(state.searchTimer);
 
   if (!searchRaw || searchRaw.length < 3) {
-    delete state.ticketBuckets.busca_remota;
-    mergeTicketBuckets();
+    if (state.ticketBuckets.busca_remota) delete state.ticketBuckets.busca_remota;
+    renderTickets();
     return;
   }
 
@@ -1030,13 +1210,14 @@ function scheduleRemoteTicketSearch() {
   }, 450);
 }
 
-function renderAndRefreshSearch() {
-  const searchRaw = normalizeKey(els.searchInput.value);
-  if (searchRaw && searchRaw.length >= 3) {
-    scheduleRemoteTicketSearch();
-    return;
-  }
+function scheduleRemoteTicketSearch() {
   renderTickets();
+  refreshQueryBackedFilters();
+}
+
+function renderAndRefreshSearch() {
+  renderTickets();
+  refreshQueryBackedFilters();
 }
 
 
@@ -1063,6 +1244,12 @@ function filteredTickets() {
       return false;
     }
 
+    if (!isOperatorOrAdmin() && ticket.organizacaoId !== state.profile?.organizacaoId) {
+      return false;
+    }
+
+    if (!ticketMatchesMainDateFilter(ticket)) return false;
+
     if (search) {
       const chave = String(ticket.chave || '').toLowerCase();
       const codigo = String(ticket.codigoProduto || '').toLowerCase();
@@ -1077,7 +1264,7 @@ function filteredTickets() {
     return true;
   });
 
-  if (!isOperatorOrAdmin() && status === 'ativos' && !search) {
+  if (!isOperatorOrAdmin() && status === 'ativos' && !search && !hasMainDateFilter()) {
     tickets = tickets.slice(0, 20);
   }
 
@@ -1796,16 +1983,27 @@ function operatorReportName(uid, name, email) {
   return user?.nome || user?.email || email || 'Sem operador';
 }
 
-function generateOperatorReport() {
+async function generateOperatorReport() {
   if (!isAdmin() || !els.operatorReportBox) return;
   ensureReportDates();
 
   const start = localDateStart(els.operatorReportStart.value);
   const end = localDateEnd(els.operatorReportEnd.value);
-  if (!start || !end || start > end) {
+  const startDate = localDateStartDate(els.operatorReportStart.value);
+  const endDate = localDateEndDate(els.operatorReportEnd.value);
+
+  if (!start || !end || start > end || !startDate || !endDate) {
     els.operatorReportBox.innerHTML = '<div class="empty-state">Informe um intervalo de datas válido.</div>';
     return;
   }
+
+  const btn = els.operatorReportBtn;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Gerando...';
+  }
+
+  els.operatorReportBox.innerHTML = '<div class="empty-state">Consultando Firestore apenas no período informado...</div>';
 
   const rows = new Map();
   const ensure = (uid, name, email) => {
@@ -1825,85 +2023,105 @@ function generateOperatorReport() {
     return rows.get(key);
   };
 
-  const inRange = (value) => {
-    const ms = timestampMillis(value);
-    return ms >= start && ms <= end;
-  };
+  async function countByDateField(field, applyTicket) {
+    const q = query(
+      collection(db, 'chamados'),
+      where(field, '>=', startDate),
+      where(field, '<=', endDate),
+      limit(1000)
+    );
+    const snapshot = await getDocs(q);
+    snapshot.docs.forEach((d) => applyTicket({ id: d.id, ...d.data() }));
+    return snapshot.size;
+  }
 
-  state.tickets.forEach((ticket) => {
-    if (ticket.tratamentoIniciadoEm && inRange(ticket.tratamentoIniciadoEm)) {
+  try {
+    await countByDateField('tratamentoIniciadoEm', (ticket) => {
       ensure(ticket.operadorTratamentoId, ticket.operadorTratamentoNome, ticket.operadorTratamentoEmail).iniciados += 1;
-    }
+    });
 
-    if (ticket.finalizadoEm && inRange(ticket.finalizadoEm)) {
+    await countByDateField('finalizadoEm', (ticket) => {
       ensure(ticket.finalizadoPor, ticket.finalizadoPorNome, ticket.finalizadoPorEmail).finalizados += 1;
-    }
+    });
 
-    if (ticket.reabertoEm && inRange(ticket.reabertoEm)) {
+    await countByDateField('reabertoEm', (ticket) => {
       ensure(ticket.reabertoPor, ticket.reabertoPorNome, ticket.reabertoPorEmail).reabertos += 1;
-    }
+    });
 
-    if (ticket.informacoesDivergentesEm && inRange(ticket.informacoesDivergentesEm)) {
+    await countByDateField('informacoesDivergentesEm', (ticket) => {
       ensure(
         ticket.informacoesDivergentesPor,
         ticket.informacoesDivergentesPorNome,
         ticket.informacoesDivergentesPorEmail
       ).divergentes += 1;
-    }
+    });
 
-    if (ticket.devolverRecusarEm && inRange(ticket.devolverRecusarEm)) {
+    await countByDateField('devolverRecusarEm', (ticket) => {
       ensure(
         ticket.devolverRecusarPor,
         ticket.devolverRecusarPorNome,
         ticket.devolverRecusarPorEmail
       ).devolvidos += 1;
+    });
+
+    const data = [...rows.values()]
+      .map((row) => ({
+        ...row,
+        total: row.iniciados + row.finalizados + row.reabertos + row.divergentes + row.devolvidos
+      }))
+      .filter((row) => row.total > 0)
+      .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'));
+
+    if (!data.length) {
+      els.operatorReportBox.innerHTML = '<div class="empty-state">Nenhuma tratativa encontrada nesse intervalo.</div>';
+      return;
     }
-  });
 
-  const data = [...rows.values()]
-    .map((row) => ({
-      ...row,
-      total: row.iniciados + row.finalizados + row.reabertos + row.divergentes + row.devolvidos
-    }))
-    .filter((row) => row.total > 0)
-    .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'));
-
-  if (!data.length) {
-    els.operatorReportBox.innerHTML = '<div class="empty-state">Nenhuma tratativa encontrada nesse intervalo.</div>';
-    return;
-  }
-
-  els.operatorReportBox.innerHTML = `
-    <div class="table-wrap">
-      <table class="report-table">
-        <thead>
-          <tr>
-            <th>Operador</th>
-            <th>Em tratamento</th>
-            <th>Finalizados</th>
-            <th>Reabertos</th>
-            <th>Divergentes</th>
-            <th>Devolver/recusar</th>
-            <th>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${data.map((row) => `
+    els.operatorReportBox.innerHTML = `
+      <div class="table-wrap">
+        <table class="report-table">
+          <thead>
             <tr>
-              <td><strong>${escapeHtml(row.nome)}</strong><br><small>${escapeHtml(row.email || row.uid)}</small></td>
-              <td>${row.iniciados}</td>
-              <td>${row.finalizados}</td>
-              <td>${row.reabertos}</td>
-              <td>${row.divergentes}</td>
-              <td>${row.devolvidos}</td>
-              <td><strong>${row.total}</strong></td>
+              <th>Operador</th>
+              <th>Em tratamento</th>
+              <th>Finalizados</th>
+              <th>Reabertos</th>
+              <th>Divergentes</th>
+              <th>Devolver/recusar</th>
+              <th>Total</th>
             </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
+          </thead>
+          <tbody>
+            ${data.map((row) => `
+              <tr>
+                <td><strong>${escapeHtml(row.nome)}</strong><br><small>${escapeHtml(row.email || row.uid)}</small></td>
+                <td>${row.iniciados}</td>
+                <td>${row.finalizados}</td>
+                <td>${row.reabertos}</td>
+                <td>${row.divergentes}</td>
+                <td>${row.devolvidos}</td>
+                <td><strong>${row.total}</strong></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Erro ao gerar relatório:', error);
+    if (String(error?.message || '').includes('requires an index')) {
+      els.operatorReportBox.innerHTML = '<div class="empty-state">O Firestore pediu um índice para esse relatório. Abra o console do navegador e clique no link do erro para criar o índice sugerido.</div>';
+      return;
+    }
+    els.operatorReportBox.innerHTML = `<div class="empty-state">Erro ao gerar relatório: ${escapeHtml(error.message)}</div>`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Gerar relatório';
+    }
+  }
 }
+
 
 async function saveOrganizationByName(nome) {
   nome = normalizeKey(nome);
@@ -2413,6 +2631,14 @@ els.ticketTypeFilter?.addEventListener('change', (event) => {
 els.statusFilter.addEventListener('change', renderAndRefreshSearch);
 els.orgFilter.addEventListener('change', (event) => {
   handleOrgFilterChange(event);
+  renderAndRefreshSearch();
+});
+
+els.mainDateStart?.addEventListener('change', renderAndRefreshSearch);
+els.mainDateEnd?.addEventListener('change', renderAndRefreshSearch);
+els.clearMainDateBtn?.addEventListener('click', () => {
+  if (els.mainDateStart) els.mainDateStart.value = '';
+  if (els.mainDateEnd) els.mainDateEnd.value = '';
   renderAndRefreshSearch();
 });
 
