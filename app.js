@@ -44,7 +44,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V15';
+const APP_VERSION = 'V16';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -393,8 +393,20 @@ function historyTypeBadge(type) {
   return `<span class="history-type ${safe}">${escapeHtml(historyTypeLabel(type))}</span>`;
 }
 
+function shortPersonName(value) {
+  const clean = normalizeKey(value);
+  if (!clean) return '';
+  const parts = clean.split(' ').filter(Boolean);
+  return parts.length > 2 ? `${parts[0]} ${parts[1]}` : clean;
+}
+
 function selectedUserName() {
-  return state.profile?.nome || state.user?.displayName || state.user?.email || 'Usuário';
+  return shortPersonName(state.profile?.nome || state.user?.displayName || state.user?.email || 'Usuário');
+}
+
+function statusAutoOccurrenceText(status) {
+  if (status === 'em_tratamento') return `Reservado por: ${selectedUserName()}`;
+  return '';
 }
 
 function safeIdFromName(name) {
@@ -1088,6 +1100,7 @@ async function loadHistory(ticketId) {
 }
 
 function historyTypeForStatusChange(status) {
+  if (status === 'em_tratamento') return 'tratativa';
   if (status === 'reaberto') return 'reabertura';
   if (status === 'informacoes_divergentes') return 'informacoes_divergentes';
   if (status === 'devolver_recusar') return 'devolver_recusar';
@@ -1101,18 +1114,22 @@ async function addHistory(ticket) {
   const statusChanged = isOperatorOrAdmin() && selectedStatus !== currentStatus;
 
   const textarea = $('newHistoryText');
-  const texto = normalizeKey(textarea.value);
+  let texto = normalizeKey(textarea.value);
   const file = state.pendingHistoryFile || $('historyFileInput')?.files?.[0] || null;
 
   if (!ticketId) return showToast('Chamado inválido.', 'error');
 
-  if (!texto && !file && !statusChanged) {
-    return showToast('Digite a ocorrência ou anexe um arquivo antes de adicionar.', 'error');
+  if (statusChanged && selectedStatus === 'em_tratamento' && !texto) {
+    texto = statusAutoOccurrenceText(selectedStatus);
   }
 
-  if (statusChanged && !texto && !file) {
+  if (statusChanged && selectedStatus !== 'em_tratamento' && !texto) {
     textarea.focus();
-    return showToast('Digite uma ocorrência explicando a alteração de status.', 'error');
+    return showToast('Digite uma nova ocorrência explicando a alteração de status.', 'error');
+  }
+
+  if (!texto && !file && !statusChanged) {
+    return showToast('Digite a ocorrência ou anexe um arquivo antes de adicionar.', 'error');
   }
 
   const addButton = $('addHistoryBtn');
