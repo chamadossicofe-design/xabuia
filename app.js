@@ -222,7 +222,9 @@ const state = {
   ticketBuckets: {},
   unsubTickets: null,
   unsubOrgs: null,
-  unsubUsers: null
+  unsubUsers: null,
+  searchTimer: null,
+  searchToken: 0
 };
 
 function showToast(message, type = 'info') {
@@ -884,6 +886,157 @@ function startTicketsListener() {
       )
     )
   ];
+}
+
+
+function clearSearchBucket() {
+  if (state.searchTimer) {
+    window.clearTimeout(state.searchTimer);
+    state.searchTimer = null;
+  }
+
+  if (state.ticketBuckets.busca_remota) {
+    delete state.ticketBuckets.busca_remota;
+    mergeTicketBuckets();
+  } else {
+    renderTickets();
+  }
+}
+
+function ticketTypeSearchValues() {
+  const selected = selectedValues(els.ticketTypeFilter, 'todos');
+  if (!selected.includes('todos')) {
+    return selected.filter((type) => TICKET_TYPE_LABELS[type]);
+  }
+  return Object.keys(TICKET_TYPE_LABELS);
+}
+
+function orgSearchValues() {
+  if (!isOperatorOrAdmin()) {
+    return state.profile?.organizacaoId ? [state.profile.organizacaoId] : [];
+  }
+
+  const selected = selectedValues(els.orgFilter, 'todas');
+  if (!selected.includes('todas')) {
+    return selected.filter(Boolean);
+  }
+
+  return state.orgs
+    .filter((org) => org && org.id && org.ativa !== false)
+    .map((org) => org.id);
+}
+
+function searchCandidateValues(raw) {
+  const value = keySearchValue(raw);
+  if (!value || value.length < 3) return [];
+
+  return ticketTypeSearchValues().map((type) => ({
+    type,
+    chaveBusca: `${type}:${value}`
+  }));
+}
+
+async function runRemoteTicketSearch(raw) {
+  const token = ++state.searchToken;
+  const searchRaw = normalizeKey(raw);
+
+  if (!searchRaw || searchRaw.length < 3) {
+    clearSearchBucket();
+    setText(els.liveStatus, 'Ao vivo');
+    return;
+  }
+
+  const orgIds = orgSearchValues();
+  const candidates = searchCandidateValues(searchRaw);
+
+  if (!orgIds.length || !candidates.length) {
+    clearSearchBucket();
+    setText(els.liveStatus, 'Ao vivo');
+    return;
+  }
+
+  setText(els.liveStatus, 'Buscando...');
+
+  const found = new Map();
+  const maxReads = 240;
+  const lookups = [];
+
+  for (const orgId of orgIds) {
+    for (const candidate of candidates) {
+      if (lookups.length >= maxReads) break;
+      const id = ticketDocId(orgId, candidate.chaveBusca);
+      lookups.push({ id, ref: doc(db, 'chamados', id) });
+    }
+    if (lookups.length >= maxReads) break;
+  }
+
+  try {
+    const batchSize = 20;
+    for (let i = 0; i < lookups.length; i += batchSize) {
+      if (token !== state.searchToken) return;
+      const batch = lookups.slice(i, i + batchSize);
+      const snaps = await Promise.all(batch.map(async (item) => {
+        try {
+          const snap = await getDoc(item.ref);
+          return { item, snap };
+        } catch (error) {
+          // Alguns perfis podem não ter permissão para documentos de outra organização ou outro operador.
+          // Na busca por ID determinístico, ignoramos esses casos para não quebrar a tela.
+          if (error?.code !== 'permission-denied') console.warn('Busca de chamado falhou:', error);
+          return null;
+        }
+      }));
+
+      snaps.forEach((entry) => {
+        if (entry?.snap?.exists()) {
+          found.set(entry.snap.id, { id: entry.snap.id, ...entry.snap.data() });
+        }
+      });
+    }
+
+    if (token !== state.searchToken) return;
+
+    state.ticketBuckets.busca_remota = [...found.values()];
+    mergeTicketBuckets();
+
+    if (found.size) {
+      setText(els.liveStatus, `Busca: ${found.size} encontrado(s)`);
+    } else {
+      setText(els.liveStatus, 'Ao vivo');
+    }
+  } catch (error) {
+    if (token !== state.searchToken) return;
+    console.error('Erro na busca remota:', error);
+    setText(els.liveStatus, 'Erro na busca');
+    showToast(`Erro ao pesquisar chamados: ${error.message}`, 'error');
+  }
+}
+
+function scheduleRemoteTicketSearch() {
+  const searchRaw = normalizeKey(els.searchInput.value);
+
+  renderTickets();
+
+  if (state.searchTimer) window.clearTimeout(state.searchTimer);
+
+  if (!searchRaw || searchRaw.length < 3) {
+    delete state.ticketBuckets.busca_remota;
+    mergeTicketBuckets();
+    return;
+  }
+
+  state.searchTimer = window.setTimeout(() => {
+    runRemoteTicketSearch(searchRaw);
+  }, 450);
+}
+
+function renderAndRefreshSearch() {
+  const searchRaw = normalizeKey(els.searchInput.value);
+  if (searchRaw && searchRaw.length >= 3) {
+    scheduleRemoteTicketSearch();
+    return;
+  }
+  renderTickets();
 }
 
 
@@ -2252,10 +2405,16 @@ els.adminBtn.addEventListener('click', () => {
 els.orgForm.addEventListener('submit', createOrg);
 els.operatorReportBtn?.addEventListener('click', generateOperatorReport);
 els.quickOrgForm?.addEventListener('submit', createOrg);
-els.searchInput.addEventListener('input', renderTickets);
-els.ticketTypeFilter?.addEventListener('change', handleTicketTypeFilterChange);
-els.statusFilter.addEventListener('change', renderTickets);
-els.orgFilter.addEventListener('change', handleOrgFilterChange);
+els.searchInput.addEventListener('input', scheduleRemoteTicketSearch);
+els.ticketTypeFilter?.addEventListener('change', (event) => {
+  handleTicketTypeFilterChange(event);
+  renderAndRefreshSearch();
+});
+els.statusFilter.addEventListener('change', renderAndRefreshSearch);
+els.orgFilter.addEventListener('change', (event) => {
+  handleOrgFilterChange(event);
+  renderAndRefreshSearch();
+});
 
 els.ticketKeyInput?.addEventListener('input', () => {
   syncTicketKeyInput(false);
