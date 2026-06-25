@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firebase direto
 // @namespace    xabuia/infradesk
-// @version      1.0.0
-// @description  Abre/atualiza chamados Xabuia direto do card do Infradesk, sem seleção manual de status; reabre somente chamados encerrados.
+// @version      2.6.0
+// @description  Abre/atualiza chamados Xabuia direto do card do Infradesk em modo leve: modo leve adaptativo: somente coluna Em Análise Terceiro, sem listeners, com refresh econômico.
 // @author       Xabuia
 // @match        https://asp.infradesk.app/backend/chamados/painel*
 // @match        https://asp.infradesk.app/backend/chamados*
@@ -23,9 +23,28 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = '7.0.0';
+  const XABUIA_VERSION = '13.0.0-terceiro-auto-refresh-adaptativo';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
+
+  // V13 leve/adaptativo:
+  // - Não usa onSnapshot no Infradesk.
+  // - Só atua na coluna Em Análise Terceiro.
+  // - Ao recarregar/focar a página, força uma checagem dos cards já conhecidos.
+  // - Depois faz refresh inteligente: lê o documento do chamado periodicamente
+  //   e só lê o último histórico quando o chamado mudou.
+  // - Modo ativo: atualiza rápido enquanto você está usando a tela.
+  // - Modo parado/noite: reduz o ritmo para economizar leituras durante longos períodos.
+  // - Assim pega resposta/status do operador sem manter listeners abertos.
+  const XABUIA_CACHE_KEY = 'xabuia_tm_cache_v13_terceiro';
+  const XABUIA_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 dias
+  const XABUIA_TARGET_STATUS_ID = '6';
+  const XABUIA_TARGET_STATUS_DESC = 'em analise terceiro';
+  const XABUIA_ACTIVE_REFRESH_TTL_MS = 1000 * 60 * 1; // usando a tela: 1 minuto
+  const XABUIA_IDLE_REFRESH_TTL_MS = 1000 * 60 * 3; // tela parada/noite: 3 minutos
+  const XABUIA_DISCOVERY_REFRESH_TTL_MS = 1000 * 60 * 10; // cards sem cache: descobre a cada 10 minutos
+  const XABUIA_ACTIVE_WINDOW_MS = 1000 * 60 * 10; // após interação, fica em modo rápido por 10 min
+  const XABUIA_AUTO_REFRESH_MAX_CARDS = 15;
 
   const firebaseConfig = {
     apiKey: 'AIzaSyADfd6RhNN6rj6qX1judbjevvh-ZwMwmJE',
@@ -55,7 +74,15 @@
     activeCard: null,
     activeData: null,
     cardUnsubs: new Map(),
-    isSaving: false
+    isSaving: false,
+    profileLoadedAt: 0,
+    profileLoading: null,
+    targetRefreshTimer: null,
+    targetRefreshRunning: false,
+    periodicRefreshTimer: null,
+    forceNextTargetRefresh: false,
+    lastHumanActivityAt: Date.now(),
+    activityRefreshTimer: null
   };
 
   /********************************************************************
@@ -66,29 +93,54 @@
   const db = firebase.firestore(app);
   auth.languageCode = 'pt-BR';
 
-  auth.onAuthStateChanged(async (user) => {
+  auth.onAuthStateChanged((user) => {
     state.authReady = true;
     state.user = user || null;
     state.profile = null;
+    state.profileLoadedAt = 0;
+    state.profileLoading = null;
 
-    // Importante: no primeiro carregamento da página o scanCards() roda antes do Firebase
-    // terminar o login. A V5 marcava o card como pronto e depois não voltava para assinar
-    // o Firestore. Limpamos as assinaturas aqui para assinar de novo assim que o perfil existir.
+    // V10: não lê Firestore no carregamento/reload do Infradesk.
+    // Perfil do usuário só é consultado quando clicar no Xabuia ou quando houver
+    // cache local suficiente para pintar um card alvo.
     clearCardSubscriptions();
     if (!user) clearAllCardBoxes();
 
-    if (user) {
-      try {
-        const snap = await db.collection('usuarios').doc(user.uid).get();
-        if (snap.exists) state.profile = { id: snap.id, ...snap.data() };
-      } catch (error) {
-        console.warn('[Xabuia] Erro ao carregar perfil:', error);
-      }
-    }
-
     renderAuthInfo();
     scanCards();
+
+    // V11: se existir card na coluna alvo, faz uma consulta leve por get(),
+    // apenas nessa coluna, para reapresentar o painel após reload.
+    // Sem onSnapshot, então não fica listener aberto.
+    if (user) scheduleTargetRefresh(450, true);
   });
+
+  async function loadProfileIfNeeded(force = false) {
+    if (!state.user) return null;
+
+    const now = Date.now();
+    if (!force && state.profile && state.profileLoadedAt && now - state.profileLoadedAt < 1000 * 60 * 10) {
+      return state.profile;
+    }
+
+    if (state.profileLoading) return state.profileLoading;
+
+    state.profileLoading = (async () => {
+      try {
+        const snap = await db.collection('usuarios').doc(state.user.uid).get();
+        state.profile = snap.exists ? { id: snap.id, ...snap.data() } : null;
+        state.profileLoadedAt = Date.now();
+        return state.profile;
+      } catch (error) {
+        console.warn('[Xabuia] Erro ao carregar perfil:', error);
+        return null;
+      } finally {
+        state.profileLoading = null;
+      }
+    })();
+
+    return state.profileLoading;
+  }
 
   /********************************************************************
    * UTILITÁRIOS
@@ -150,6 +202,113 @@
       dateStyle: 'short',
       timeStyle: 'short'
     }).format(date);
+  }
+
+  function toMillis(value) {
+    if (!value) return 0;
+    if (typeof value.toMillis === 'function') return value.toMillis();
+    if (typeof value.toDate === 'function') return value.toDate().getTime();
+    if (value instanceof Date) return value.getTime();
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function readCache() {
+    try {
+      const raw = localStorage.getItem(XABUIA_CACHE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function writeCache(cache) {
+    try {
+      localStorage.setItem(XABUIA_CACHE_KEY, JSON.stringify(cache || {}));
+    } catch (_) {}
+  }
+
+  function cacheKeyFor(chave) {
+    const orgId = state.profile?.organizacaoId || '';
+    const cleanKey = digitsOnly(chave);
+    return orgId && cleanKey ? `${orgId}|${cleanKey}` : '';
+  }
+
+  function normalizeCachedEntry(entry) {
+    if (!entry || !entry.ticket) return null;
+    const out = {
+      ...entry,
+      ticket: {
+        ...entry.ticket,
+        __fromCache: true,
+        atualizadoEm: entry.ticket.atualizadoEmMs ? new Date(entry.ticket.atualizadoEmMs) : entry.ticket.atualizadoEm
+      },
+      history: entry.history ? {
+        ...entry.history,
+        criadoEm: entry.history.criadoEmMs ? new Date(entry.history.criadoEmMs) : entry.history.criadoEm
+      } : null
+    };
+    return out;
+  }
+
+  function rememberCardTicket(card, ticket = null, history = null) {
+    if (!card || !state.profile?.organizacaoId || !ticket) return;
+    const data = parseCard(card);
+    if (!data.chave) return;
+
+    const key = cacheKeyFor(data.chave);
+    if (!key) return;
+
+    const cache = readCache();
+    const previous = cache[key] || {};
+    const nowMs = Date.now();
+
+    cache[key] = {
+      orgId: state.profile.organizacaoId,
+      chave: data.chave,
+      cachedAt: nowMs,
+      remoteCheckedAt: nowMs,
+      ticket: {
+        status: ticket.status || 'aberto',
+        atualizadoEmMs: toMillis(ticket.atualizadoEm) || nowMs,
+        ultimaOcorrenciaTexto: ticket.ultimaOcorrenciaTexto || ticket.ultimoComentario || ticket.ultimaObservacao || '',
+        ultimaOcorrenciaUsuarioNome: ticket.ultimaOcorrenciaUsuarioNome || ticket.ultimaOcorrenciaUsuarioEmail || ''
+      },
+      history: history ? {
+        texto: historyText(history),
+        usuarioNome: history.usuarioNome || history.usuarioEmail || '',
+        criadoEmMs: toMillis(history.criadoEm) || nowMs
+      } : null
+    };
+
+    // limpeza simples para não deixar localStorage crescer para sempre
+    Object.keys(cache).forEach((itemKey) => {
+      const item = cache[itemKey];
+      if (!item || !item.cachedAt || nowMs - item.cachedAt > XABUIA_CACHE_TTL_MS) {
+        delete cache[itemKey];
+      }
+    });
+
+    writeCache(cache);
+  }
+
+  function cachedEntryForCard(card) {
+    if (!card || !state.profile?.organizacaoId) return null;
+    const data = parseCard(card);
+    if (!data.chave) return null;
+
+    const entry = readCache()[cacheKeyFor(data.chave)];
+    if (!entry || entry.orgId !== state.profile.organizacaoId) return null;
+    if (!entry.cachedAt || Date.now() - entry.cachedAt > XABUIA_CACHE_TTL_MS) return null;
+    return normalizeCachedEntry(entry);
+  }
+
+  function renderCachedCardBox(card) {
+    const entry = cachedEntryForCard(card);
+    if (!entry || !entry.ticket) return false;
+    renderCardBox(card, entry.ticket, entry.history || null);
+    return true;
   }
 
   function selectedUserName() {
@@ -546,8 +705,8 @@
 
     if (!state.profile) {
       authbar.className = 'xabuia-authbar';
-      authbar.innerHTML = `Logado como <strong>${escapeHtml(state.user.email)}</strong>, mas o perfil Xabuia não foi encontrado.`;
-      saveBtn.disabled = true;
+      authbar.innerHTML = `Logado como <strong>${escapeHtml(state.user.email)}</strong>. O perfil Xabuia será conferido ao clicar/salvar.`;
+      saveBtn.disabled = false;
       return;
     }
 
@@ -570,29 +729,152 @@
     saveBtn.disabled = false;
   }
 
+  function normalizeStatusText(value) {
+    return normalizeText(value)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  }
+
+  function cardStatusInfo(card) {
+    const ul = card?.closest?.('ul.list-status-chamados[data-status-id], ul[data-status-id]');
+    const statusId = normalizeText(ul?.getAttribute('data-status-id') || '');
+    const statusDesc = normalizeStatusText(ul?.getAttribute('data-status-descricao') || '');
+    return { ul, statusId, statusDesc };
+  }
+
+  function isTargetCard(card) {
+    const info = cardStatusInfo(card);
+    return info.statusId === XABUIA_TARGET_STATUS_ID || info.statusDesc.includes(XABUIA_TARGET_STATUS_DESC);
+  }
+
+  function removeXabuiaUiFromCard(card) {
+    if (!card) return;
+    $$('.xabuia-card-btn', card).forEach((btn) => btn.remove());
+    $$('.xabuia-box', card).forEach((box) => box.remove());
+    delete card.dataset.xabuiaButtonReady;
+    delete card.dataset.xabuiaAutoRefreshAt;
+  }
+
+  function currentAutoRefreshTtl() {
+    const activeRecently = Date.now() - Number(state.lastHumanActivityAt || 0) < XABUIA_ACTIVE_WINDOW_MS;
+    return activeRecently ? XABUIA_ACTIVE_REFRESH_TTL_MS : XABUIA_IDLE_REFRESH_TTL_MS;
+  }
+
+  function shouldAutoRefreshCard(card, opts = {}) {
+    if (!card || !state.user || !state.profile?.organizacaoId) return false;
+    const data = parseCard(card);
+    if (!data.chave || data.chave.length !== 44) return false;
+
+    const key = cacheKeyFor(data.chave);
+    const entry = key ? readCache()[key] : null;
+    const lastRemoteCheck = Number(entry?.remoteCheckedAt || 0);
+    const hasKnownXabuia = Boolean(entry?.ticket);
+
+    // V12: quando a página recarrega/ganha foco, confere imediatamente os cards
+    // que já têm Xabuia conhecida. Isso evita ficar preso em cache velho.
+    if (opts.forceKnown && hasKnownXabuia) return true;
+
+    const ttl = hasKnownXabuia ? currentAutoRefreshTtl() : XABUIA_DISCOVERY_REFRESH_TTL_MS;
+    return !lastRemoteCheck || Date.now() - lastRemoteCheck > ttl;
+  }
+
+  function markRemoteChecked(card) {
+    if (!card || !state.profile?.organizacaoId) return;
+    const data = parseCard(card);
+    const key = data.chave ? cacheKeyFor(data.chave) : '';
+    if (!key) return;
+    const cache = readCache();
+    cache[key] = cache[key] || {
+      orgId: state.profile.organizacaoId,
+      chave: data.chave,
+      cachedAt: Date.now()
+    };
+    cache[key].remoteCheckedAt = Date.now();
+    writeCache(cache);
+  }
+
+  function targetCards() {
+    return $$('.chamado-item[data-chamado-id]').filter((card) => isTargetCard(card));
+  }
+
+  function hasTargetCards() {
+    return targetCards().length > 0;
+  }
+
+  function scheduleTargetRefresh(delay = 300, forceKnown = false) {
+    if (forceKnown) state.forceNextTargetRefresh = true;
+    window.clearTimeout(state.targetRefreshTimer);
+    state.targetRefreshTimer = window.setTimeout(refreshTargetCardsIfNeeded, delay);
+  }
+
+  async function refreshTargetCardsIfNeeded() {
+    if (state.targetRefreshRunning) return;
+    if (!state.user) return;
+
+    const cards = targetCards();
+    if (!cards.length) return;
+
+    state.targetRefreshRunning = true;
+    const forceKnown = state.forceNextTargetRefresh;
+    state.forceNextTargetRefresh = false;
+    try {
+      // Uma única leitura de perfil por janela de cache. Só acontece se existir card alvo.
+      await loadProfileIfNeeded(false);
+      if (!state.profile?.organizacaoId) return;
+
+      // scanCards decide quais cards precisam consultar remoto de acordo com o TTL.
+      scanCards({ forceKnown });
+    } finally {
+      state.targetRefreshRunning = false;
+    }
+  }
+
   /********************************************************************
    * CARD DO INFRADESK
    ********************************************************************/
-  function scanCards() {
+  function scanCards(opts = {}) {
     injectStyles();
     ensureModal();
 
-    $$('.chamado-item[data-chamado-id]').forEach((card) => {
+    const allCards = $$('.chamado-item[data-chamado-id]');
+    let autoRefreshCount = 0;
+
+    allCards.forEach((card) => {
       if (!card) return;
+
+      if (!isTargetCard(card)) {
+        // V10: não queremos nem ícone fora de "Em Análise Terceiro".
+        removeXabuiaUiFromCard(card);
+        return;
+      }
 
       if (card.dataset.xabuiaButtonReady !== '1') {
         card.dataset.xabuiaButtonReady = '1';
         addXabuiaButton(card);
       }
 
-      // Mesmo que o botão já exista, tenta assinar o Firestore quando o login/perfil ficar pronto.
-      // Isso garante que, ao recarregar a página, o bloco colorido volte a aparecer nos cards
-      // que já possuem Xabuia aberta.
-      observeCardXabuiaStatus(card);
+      // Reapresenta cache local, sem Firestore.
+      renderCachedCardBox(card);
+
+      // V10: consulta remota opcional e limitada, somente na coluna alvo.
+      // Isso permite a última resposta aparecer no Infradesk sem assinar todos os cards.
+      if (
+        state.user &&
+        state.profile?.organizacaoId &&
+        autoRefreshCount < XABUIA_AUTO_REFRESH_MAX_CARDS &&
+        shouldAutoRefreshCard(card, { forceKnown: opts.forceKnown })
+      ) {
+        autoRefreshCount += 1;
+        markRemoteChecked(card);
+        refreshCardXabuiaStatus(card, { silent: true, forceHistory: opts.forceKnown });
+      }
     });
   }
 
   function addXabuiaButton(card) {
+    if (!isTargetCard(card)) return;
+    if ($('.xabuia-card-btn', card)) return;
     const data = parseCard(card);
     const toolbar = $('.list-toolbar .toolbar-atendente', card) || $('.list-toolbar', card) || card;
     const anchor = $('.btn-anexo', toolbar);
@@ -677,75 +959,102 @@
         <small>${escapeHtml(histDate)}${histUser ? ' • ' : ''}${escapeHtml(histUser)}</small>
       </div>
     `;
+
+    // Guarda a última informação conhecida para reaparecer após reload sem consultar o Firestore.
+    // Quando veio do próprio cache, não regrava para evitar escrita local a cada scan do DOM.
+    if (!ticket.__fromCache) {
+      rememberCardTicket(card, ticket, history, false);
+    }
   }
 
-  function observeCardXabuiaStatus(card) {
-    if (!canOpenFromInfradesk()) return;
-    if (card.dataset.xabuiaObserved === '1') return;
+  async function refreshCardXabuiaStatus(card, opts = {}) {
+    if (!canOpenFromInfradesk()) return null;
 
     const data = parseCard(card);
-    if (!data.chave || data.chave.length !== 44) return;
+    if (!data.chave || data.chave.length !== 44) return null;
 
     const ref = ticketRefForKey(data.chave);
-    if (!ref) return;
+    if (!ref) return null;
 
-    card.dataset.xabuiaObserved = '1';
-    const key = `${state.profile.organizacaoId}|${card.getAttribute('data-chamado-id')}|${data.chave}|${Date.now()}|${Math.random().toString(36).slice(2)}`;
+    try {
+      const previousEntry = cachedEntryForCard(card);
+      const previousTicket = previousEntry?.ticket || null;
+      const previousHistory = previousEntry?.history || null;
+      const previousUpdatedMs = toMillis(previousTicket?.atualizadoEm);
+      const previousStatus = previousTicket?.status || '';
 
-    let lastTicket = null;
-    let lastHistory = null;
-    let unsubHistory = null;
+      // V12: leitura leve principal. Esta leitura é suficiente para saber se status/data mudou.
+      const snap = await ref.get();
 
-    const unsubTicket = ref.onSnapshot((snap) => {
       if (!snap.exists) {
-        lastTicket = null;
-        lastHistory = null;
-        if (unsubHistory) {
-          unsubHistory();
-          unsubHistory = null;
-        }
         removeCardBox(card);
-        return;
+        const key = cacheKeyFor(data.chave);
+        if (key) {
+          const cache = readCache();
+          delete cache[key];
+          writeCache(cache);
+        }
+        return null;
       }
 
-      lastTicket = { id: snap.id, ...snap.data() };
-      renderCardBox(card, lastTicket, lastHistory);
+      const ticket = { id: snap.id, ...snap.data() };
+      const currentUpdatedMs = toMillis(ticket.atualizadoEm);
+      const currentStatus = ticket.status || '';
 
-      if (!unsubHistory) {
-        unsubHistory = ref.collection('historico')
-          .orderBy('criadoEm', 'desc')
-          .limit(1)
-          .onSnapshot((historySnap) => {
-            lastHistory = historySnap.docs[0]?.data() || null;
-            renderCardBox(card, lastTicket, lastHistory);
-          }, (error) => {
-            console.warn('[Xabuia] Erro ao ler histórico:', error);
-            renderCardBox(card, lastTicket, lastHistory);
-          });
+      let history = previousHistory || null;
+      const changed =
+        opts.forceHistory ||
+        !history ||
+        currentStatus !== previousStatus ||
+        (currentUpdatedMs && previousUpdatedMs && currentUpdatedMs !== previousUpdatedMs) ||
+        (currentUpdatedMs && !previousUpdatedMs);
+
+      // Só lê o último histórico quando precisa. Assim o refresh automático consome 1 leitura
+      // na maioria dos ciclos, e 2 leituras apenas quando há alteração real.
+      if (changed) {
+        try {
+          const historySnap = await ref.collection('historico')
+            .orderBy('criadoEm', 'desc')
+            .limit(1)
+            .get();
+
+          history = historySnap.docs[0]?.data() || null;
+        } catch (historyError) {
+          console.warn('[Xabuia] Erro ao ler última ocorrência:', historyError);
+        }
       }
-    }, (error) => {
-      console.warn('[Xabuia] Erro ao ler chamado:', error);
-      // Para não poluir os cards, não mostramos bloco de erro quando não existe Xabuia carregada.
-      // O erro continua no console para diagnóstico. Permite nova tentativa em um próximo scan.
-      delete card.dataset.xabuiaObserved;
-    });
 
-    state.cardUnsubs.set(key, () => {
-      try { unsubTicket(); } catch (_) {}
-      try { if (unsubHistory) unsubHistory(); } catch (_) {}
-    });
+      renderCardBox(card, ticket, history);
+      rememberCardTicket(card, ticket, history);
+      return { ticket, history };
+    } catch (error) {
+      console.warn('[Xabuia] Erro ao consultar chamado:', error);
+      if (!opts.silent) {
+        showToast('Não consegui consultar a Xabuia deste card.', 'error');
+      }
+      return null;
+    }
   }
 
   /********************************************************************
    * MODAL E SALVAMENTO
    ********************************************************************/
-  function openModal(card) {
+  async function openModal(card) {
+    if (!isTargetCard(card)) {
+      showToast('O Xabuia está habilitado apenas na coluna Em Análise Terceiro.', 'error');
+      return;
+    }
+
     state.activeCard = card;
     state.activeData = parseCard(card);
 
     if (!state.activeData.chave || state.activeData.chave.length !== 44) {
       showToast('Não encontrei uma chave NF-e de 44 dígitos neste card.', 'error');
       return;
+    }
+
+    if (state.user && !state.profile) {
+      await loadProfileIfNeeded(false);
     }
 
     const parsed = state.activeData.parsed;
@@ -760,6 +1069,12 @@
     $('#xabuia-comment').value = '';
     renderAuthInfo();
     $('#xabuia-overlay').classList.add('open');
+
+    // V9 máximo leve: consulta apenas uma vez o card aberto, sem listener permanente.
+    if (canOpenFromInfradesk()) {
+      refreshCardXabuiaStatus(card, { silent: true });
+    }
+
     setTimeout(() => $('#xabuia-comment')?.focus(), 50);
   }
 
@@ -876,6 +1191,10 @@
     }
 
     if (!state.profile) {
+      await loadProfileIfNeeded(true);
+    }
+
+    if (!state.profile) {
       showToast('Perfil Xabuia não encontrado para este usuário.', 'error');
       return;
     }
@@ -954,15 +1273,18 @@
       showToast(feedback, 'success');
 
       if (card) {
-        renderCardBox(card, {
+        const localTicket = {
           status: finalStatus,
           atualizadoEm: new Date()
-        }, {
+        };
+        const localHistory = {
           texto: comment,
           usuarioNome: selectedUserName(),
           criadoEm: new Date()
-        });
-        observeCardXabuiaStatus(card);
+        };
+
+        renderCardBox(card, localTicket, localHistory);
+        rememberCardTicket(card, localTicket, localHistory);
       }
 
       closeModal();
@@ -984,15 +1306,50 @@
    ********************************************************************/
   const observer = new MutationObserver(() => {
     window.clearTimeout(scanCards.timer);
-    scanCards.timer = window.setTimeout(scanCards, 300);
+    scanCards.timer = window.setTimeout(() => {
+      scanCards();
+      // Se o Infradesk redesenhou/moveu cards, confere somente a coluna alvo.
+      scheduleTargetRefresh(700, false);
+    }, 300);
   });
+
+  function markHumanActivity() {
+    state.lastHumanActivityAt = Date.now();
+    window.clearTimeout(state.activityRefreshTimer);
+    state.activityRefreshTimer = window.setTimeout(() => {
+      if (!document.hidden) scheduleTargetRefresh(350, false);
+    }, 1200);
+  }
 
   function boot() {
     injectStyles();
     ensureModal();
     scanCards();
+    scheduleTargetRefresh(700, true);
+
     observer.observe(document.body, { childList: true, subtree: true });
-    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado.`);
+
+    if (!state.periodicRefreshTimer) {
+      state.periodicRefreshTimer = window.setInterval(() => {
+        if (!document.hidden) scheduleTargetRefresh(0, false);
+      }, XABUIA_ACTIVE_REFRESH_TTL_MS);
+    }
+
+    window.addEventListener('focus', () => {
+      markHumanActivity();
+      scheduleTargetRefresh(250, true);
+    });
+    ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach((eventName) => {
+      window.addEventListener(eventName, markHumanActivity, { passive: true });
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        markHumanActivity();
+        scheduleTargetRefresh(250, true);
+      }
+    });
+
+    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Alvo: somente Em Análise Terceiro. Sem listeners; refresh adaptativo por get().`);
   }
 
   if (document.readyState === 'loading') {
