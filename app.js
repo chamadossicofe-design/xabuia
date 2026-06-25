@@ -22,6 +22,7 @@ import {
   getDocs,
   updateDoc,
   serverTimestamp,
+  arrayUnion,
   query,
   where,
   orderBy,
@@ -44,7 +45,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V16';
+const APP_VERSION = 'V21-firestore-economico';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -87,6 +88,9 @@ const STATUS_LABELS = {
 
 const ACTIVE_STATUSES = ['aberto', 'reaberto', 'em_tratamento'];
 const CLOSED_STATUSES = ['finalizado', 'informacoes_divergentes', 'devolver_recusar'];
+const ALL_TICKET_STATUSES = [...ACTIVE_STATUSES, ...CLOSED_STATUSES];
+const LIVE_OPEN_LIMIT = 250;
+const LIVE_TREATMENT_LIMIT = 250;
 
 const HISTORY_TYPE_LABELS = {
   criacao: 'Criação',
@@ -228,7 +232,8 @@ const state = {
   searchTimer: null,
   searchToken: 0,
   filterTimer: null,
-  filterToken: 0
+  filterToken: 0,
+  historyLoadedFor: null
 };
 
 function showToast(message, type = 'info') {
@@ -658,6 +663,65 @@ function setText(el, value) {
   if (el) el.textContent = value;
 }
 
+function currentUserSolicitanteArray() {
+  return state.user?.uid ? [state.user.uid] : [];
+}
+
+function requesterUpdatePayload() {
+  return state.user?.uid ? { solicitantesIds: arrayUnion(state.user.uid) } : {};
+}
+
+function lastOccurrencePayload(texto, tipo, anexo = null) {
+  const payload = {
+    ultimaOcorrenciaTexto: normalizeKey(texto || ''),
+    ultimaOcorrenciaTipo: tipo || 'observacao',
+    ultimaOcorrenciaUsuarioId: state.user?.uid || null,
+    ultimaOcorrenciaUsuarioNome: selectedUserName(),
+    ultimaOcorrenciaUsuarioEmail: state.user?.email || null,
+    ultimaOcorrenciaEm: serverTimestamp(),
+    atualizadoEm: serverTimestamp()
+  };
+  if (anexo) payload.anexo = anexo;
+  return payload;
+}
+
+function createTicketBasePayload({ tipoChamado, chave, chaveBusca, org, codigoProduto = null, observacao = '', tipoHistorico = 'criacao' }) {
+  return {
+    tipoChamado,
+    ...(codigoProduto ? { codigoProduto } : {}),
+    chave,
+    chaveBusca,
+    organizacaoId: org.id,
+    organizacaoNome: org.nome,
+    status: 'aberto',
+    criadoPor: state.user.uid,
+    criadoPorNome: selectedUserName(),
+    criadoPorEmail: state.user.email,
+    criadoEm: serverTimestamp(),
+    atualizadoEm: serverTimestamp(),
+    solicitantesIds: currentUserSolicitanteArray(),
+    ultimaOcorrenciaTexto: normalizeKey(observacao || ''),
+    ultimaOcorrenciaTipo: tipoHistorico,
+    ultimaOcorrenciaUsuarioId: state.user.uid,
+    ultimaOcorrenciaUsuarioNome: selectedUserName(),
+    ultimaOcorrenciaUsuarioEmail: state.user.email,
+    ultimaOcorrenciaEm: serverTimestamp()
+  };
+}
+
+async function addHistoryDoc(ticketId, texto, tipo = 'observacao', extra = {}) {
+  await addDoc(collection(db, 'chamados', ticketId, 'historico'), {
+    texto,
+    tipo,
+    usuarioId: state.user.uid,
+    usuarioNome: selectedUserName(),
+    usuarioEmail: state.user.email,
+    criadoEm: serverTimestamp(),
+    ...extra
+  });
+}
+
+
 async function loadOrCreateProfile(user) {
   const profileRef = doc(db, 'usuarios', user.uid);
   const snap = await getDoc(profileRef);
@@ -855,21 +919,23 @@ function startTicketsListener() {
 
   const chamadosRef = collection(db, 'chamados');
 
-  // Painel inicial leve:
-  // - operador/admin: fila aberta/reaberta geral + somente os próprios em tratamento;
-  // - usuário comum: chamados ativos da própria organização, incluindo em tratamento.
+  // V21 econômico:
+  // - operador/admin acompanha só a fila aberta/reaberta + os próprios em tratamento;
+  // - usuário comum acompanha somente chamados onde ele está em solicitantesIds;
+  // - nada de listener de coleção inteira para usuário comum.
   if (isOperatorOrAdmin()) {
     state.unsubTickets = [
       listenTicketBucket(
         'fila_aberta_reaberta',
-        query(chamadosRef, where('status', 'in', ['aberto', 'reaberto']))
+        query(chamadosRef, where('status', 'in', ['aberto', 'reaberto']), limit(LIVE_OPEN_LIMIT))
       ),
       listenTicketBucket(
         'meus_em_tratamento',
         query(
           chamadosRef,
           where('status', '==', 'em_tratamento'),
-          where('operadorTratamentoId', '==', state.user.uid)
+          where('operadorTratamentoId', '==', state.user.uid),
+          limit(LIVE_TREATMENT_LIMIT)
         )
       )
     ];
@@ -878,16 +944,17 @@ function startTicketsListener() {
 
   state.unsubTickets = [
     listenTicketBucket(
-      'minha_org_ativos',
+      'meus_chamados',
       query(
         chamadosRef,
         where('organizacaoId', '==', state.profile.organizacaoId),
-        where('status', 'in', ['aberto', 'reaberto', 'em_tratamento'])
+        where('solicitantesIds', 'array-contains', state.user.uid),
+        where('status', 'in', ALL_TICKET_STATUSES),
+        limit(200)
       )
     )
   ];
 }
-
 
 function clearSearchBucket() {
   if (state.searchTimer) {
@@ -1155,9 +1222,9 @@ async function runRemoteTicketSearch(raw) {
   }
 
   const orgIds = orgSearchValues();
-  const candidates = searchCandidateValues(searchRaw);
+  const candidates = searchCandidateValues(searchRaw).map((item) => item.chaveBusca);
 
-  if (!orgIds.length || !candidates.length) {
+  if (!candidates.length) {
     clearSearchBucket();
     setText(els.liveStatus, 'Ao vivo');
     return;
@@ -1165,55 +1232,38 @@ async function runRemoteTicketSearch(raw) {
 
   setText(els.liveStatus, 'Buscando...');
 
-  const found = new Map();
-  const maxReads = 300;
-  const lookups = [];
-
-  for (const orgId of orgIds) {
-    for (const candidate of candidates) {
-      if (lookups.length >= maxReads) break;
-      const id = ticketDocId(orgId, candidate.chaveBusca);
-      lookups.push({ id, ref: doc(db, 'chamados', id) });
-    }
-    if (lookups.length >= maxReads) break;
-  }
-
   try {
-    const batchSize = 20;
-    for (let i = 0; i < lookups.length; i += batchSize) {
-      if (token !== state.searchToken) return;
-      const batch = lookups.slice(i, i + batchSize);
-      const snaps = await Promise.all(batch.map(async (item) => {
-        try {
-          const snap = await getDoc(item.ref);
-          return { item, snap };
-        } catch (error) {
-          if (error?.code !== 'permission-denied') console.warn('Busca de chamado falhou:', error);
-          return null;
-        }
-      }));
+    const found = new Map();
+    const chamadosRef = collection(db, 'chamados');
+    const chaveChunks = [];
+    for (let i = 0; i < candidates.length; i += 10) chaveChunks.push(candidates.slice(i, i + 10));
 
-      snaps.forEach((entry) => {
-        if (entry?.snap?.exists()) {
-          found.set(entry.snap.id, { id: entry.snap.id, ...entry.snap.data() });
-        }
-      });
+    const effectiveOrgIds = !isOperatorOrAdmin()
+      ? (state.profile?.organizacaoId ? [state.profile.organizacaoId] : [])
+      : (orgIds.length ? orgIds : [null]);
+
+    for (const orgId of effectiveOrgIds) {
+      for (const chunk of chaveChunks) {
+        if (token !== state.searchToken) return;
+        const parts = [chamadosRef, where('chaveBusca', 'in', chunk), limit(20)];
+        if (orgId) parts.splice(1, 0, where('organizacaoId', '==', orgId));
+        const snapshot = await getDocs(query(...parts));
+        snapshot.docs.forEach((d) => found.set(d.id, { id: d.id, ...d.data() }));
+      }
     }
 
     if (token !== state.searchToken) return;
-
     state.ticketBuckets.busca_remota = [...found.values()];
     mergeTicketBuckets();
-
-    if (found.size) {
-      setText(els.liveStatus, `Busca: ${found.size} encontrado(s)`);
-    } else {
-      setText(els.liveStatus, 'Ao vivo');
-    }
+    setText(els.liveStatus, found.size ? `Busca: ${found.size} encontrado(s)` : 'Ao vivo');
   } catch (error) {
     if (token !== state.searchToken) return;
     console.error('Erro na busca remota:', error);
     setText(els.liveStatus, 'Erro na busca');
+    if (String(error?.message || '').includes('requires an index')) {
+      showToast('O Firestore pediu um índice para a busca. Publique o firestore.indexes.json atualizado do pacote v21.', 'error');
+      return;
+    }
     showToast(`Erro ao pesquisar chamados: ${error.message}`, 'error');
   }
 }
@@ -1343,13 +1393,16 @@ function renderTickets() {
     `;
   }).join('');
 
-  if (state.selectedTicketId) {
-    renderTicketDetail(state.tickets.find((t) => t.id === state.selectedTicketId));
+  if (state.selectedTicketId && !state.tickets.some((t) => t.id === state.selectedTicketId)) {
+    state.selectedTicketId = null;
+    state.historyLoadedFor = null;
+    renderTicketDetail(null);
   }
 }
 
 async function selectTicket(ticketId) {
   state.selectedTicketId = ticketId;
+  state.historyLoadedFor = null;
   const ticket = state.tickets.find((t) => t.id === ticketId);
   renderTickets();
   await renderTicketDetail(ticket);
@@ -1441,7 +1494,10 @@ async function renderTicketDetail(ticket) {
   clearHistoryAttachment();
   setupHistoryPasteZone();
   $('addHistoryBtn').addEventListener('click', () => addHistory(ticket));
-  await loadHistory(ticket.id);
+  if (state.historyLoadedFor !== ticket.id) {
+    await loadHistory(ticket.id);
+    state.historyLoadedFor = ticket.id;
+  }
 }
 
 
@@ -1449,7 +1505,7 @@ async function loadHistory(ticketId) {
   const historyList = $('historyList');
   if (!historyList) return;
 
-  const q = query(collection(db, 'chamados', ticketId, 'historico'), orderBy('criadoEm', 'asc'));
+  const q = query(collection(db, 'chamados', ticketId, 'historico'), orderBy('criadoEm', 'asc'), limit(80));
   const snapshot = await getDocs(q);
   const items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
 
@@ -1516,26 +1572,19 @@ async function addHistory(ticket) {
     const historyType = statusChanged ? historyTypeForStatusChange(selectedStatus) : 'observacao';
 
     const updatePayload = {
-      atualizadoEm: serverTimestamp(),
       ...(statusChanged ? ticketStatusPayload(selectedStatus) : {}),
+      ...lastOccurrencePayload(textoFinal, historyType, anexo),
       ...(anexo ? { anexo } : {})
     };
 
     await updateDoc(doc(db, 'chamados', ticketId), updatePayload);
-
-    await addDoc(collection(db, 'chamados', ticketId, 'historico'), {
-      texto: textoFinal,
-      tipo: historyType,
-      usuarioId: state.user.uid,
-      usuarioNome: selectedUserName(),
-      usuarioEmail: state.user.email,
-      criadoEm: serverTimestamp(),
-      ...(anexo ? { anexo } : {})
-    });
+    await addHistoryDoc(ticketId, textoFinal, historyType, anexo ? { anexo } : {});
 
     textarea.value = '';
     clearHistoryAttachment();
+    state.historyLoadedFor = null;
     await loadHistory(ticketId);
+    state.historyLoadedFor = ticketId;
 
     if (statusChanged) {
       showToast(warning || `Status e ocorrência salvos: ${STATUS_LABELS[selectedStatus]}.`, warning ? 'error' : 'success');
@@ -1553,15 +1602,7 @@ async function addHistory(ticket) {
 }
 
 async function addSystemHistory(ticketId, texto, tipo = 'status', extra = {}) {
-  await addDoc(collection(db, 'chamados', ticketId, 'historico'), {
-    texto,
-    tipo,
-    usuarioId: state.user.uid,
-    usuarioNome: selectedUserName(),
-    usuarioEmail: state.user.email,
-    criadoEm: serverTimestamp(),
-    ...extra
-  });
+  await addHistoryDoc(ticketId, texto, tipo, extra);
 }
 
 async function uploadTicketFile(ticketId, file) {
@@ -1652,16 +1693,24 @@ function ticketStatusPayload(status) {
 }
 
 async function reopenTicket(ticket, texto = 'Chamado reaberto.') {
-  await updateDoc(doc(db, 'chamados', ticket.id), ticketStatusPayload('reaberto'));
+  await updateDoc(doc(db, 'chamados', ticket.id), {
+    ...ticketStatusPayload('reaberto'),
+    ...lastOccurrencePayload(texto, 'reabertura')
+  });
   await addSystemHistory(ticket.id, texto, 'reabertura');
   showToast('Chamado reaberto.', 'success');
 }
 
 async function updateTicketStatus(ticket, status) {
   if (!STATUS_LABELS[status]) return;
-  await updateDoc(doc(db, 'chamados', ticket.id), ticketStatusPayload(status));
+  const texto = `Status alterado para ${STATUS_LABELS[status]}.`;
+  const tipo = status === 'reaberto' ? 'reabertura' : 'status';
+  await updateDoc(doc(db, 'chamados', ticket.id), {
+    ...ticketStatusPayload(status),
+    ...lastOccurrencePayload(texto, tipo)
+  });
 
-  await addSystemHistory(ticket.id, `Status alterado para ${STATUS_LABELS[status]}.`, status === 'reaberto' ? 'reabertura' : 'status');
+  await addSystemHistory(ticket.id, texto, tipo);
 
   showToast('Status atualizado.', 'success');
 }
@@ -1727,39 +1776,23 @@ async function createTicket(event) {
     const existingTicket = existingInMemory || (existingSnap?.exists() ? { id: deterministicRef.id, ...existingSnap.data() } : null);
 
     if (existingTicket) {
-      await updateDoc(existingRef, ticketStatusPayload('reaberto'));
       const { anexo, warning } = await tryUploadTicketFile(existingRef.id, file);
-      if (anexo) await updateDoc(existingRef, { anexo, atualizadoEm: serverTimestamp() });
+      const updatePayload = {
+        ...ticketStatusPayload('reaberto'),
+        ...requesterUpdatePayload(),
+        ...lastOccurrencePayload(observacao, 'reabertura', anexo),
+        ...(anexo ? { anexo } : {})
+      };
+      await updateDoc(existingRef, updatePayload);
       await addSystemHistory(existingRef.id, observacao, 'reabertura', anexo ? { anexo } : {});
       showToast(warning || 'Já existia chamado com essa chave e formulário. Reabri o mesmo chamado e incluí a nova ocorrência.', warning ? 'error' : 'success');
       state.selectedTicketId = existingRef.id;
     } else {
-      await setDoc(deterministicRef, {
-        tipoChamado,
-        chave,
-        chaveBusca,
-        organizacaoId: org.id,
-        organizacaoNome: org.nome,
-        status: 'aberto',
-        criadoPor: state.user.uid,
-        criadoPorNome: selectedUserName(),
-        criadoPorEmail: state.user.email,
-        criadoEm: serverTimestamp(),
-        atualizadoEm: serverTimestamp()
-      });
+      await setDoc(deterministicRef, createTicketBasePayload({ tipoChamado, chave, chaveBusca, org, observacao, tipoHistorico }));
 
       const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, file);
-      if (anexo) await updateDoc(deterministicRef, { anexo, atualizadoEm: serverTimestamp() });
-
-      await addDoc(collection(db, 'chamados', deterministicRef.id, 'historico'), {
-        texto: observacao,
-        tipo: tipoHistorico,
-        usuarioId: state.user.uid,
-        usuarioNome: selectedUserName(),
-        usuarioEmail: state.user.email,
-        criadoEm: serverTimestamp(),
-        ...(anexo ? { anexo } : {})
-      });
+      if (anexo) await updateDoc(deterministicRef, { ...lastOccurrencePayload(observacao, tipoHistorico, anexo), anexo });
+      await addSystemHistory(deterministicRef.id, observacao, tipoHistorico, anexo ? { anexo } : {});
 
       state.selectedTicketId = deterministicRef.id;
       showToast(warning || 'Chamado criado com sucesso.', warning ? 'error' : 'success');
@@ -1771,7 +1804,7 @@ async function createTicket(event) {
     els.ticketDialog.close();
   } catch (error) {
     const message = error?.code === 'permission-denied'
-      ? 'Permissão negada pelo Firestore. Publique o firestore.rules atualizado. Se estava usando anexo, crie também o Cloud Storage e publique o storage.rules.'
+      ? 'Permissão negada pelo Firestore. Publique o firestore.rules v21 atualizado.'
       : error.message;
     showToast(`Erro ao salvar chamado: ${message}`, 'error');
   } finally {
@@ -1838,40 +1871,30 @@ async function createProductTicket(event) {
     const existingTicket = existingInMemory || (existingSnap?.exists() ? { id: deterministicRef.id, ...existingSnap.data() } : null);
 
     if (existingTicket) {
-      await updateDoc(existingRef, ticketStatusPayload('reaberto'));
       const { anexo, warning } = await tryUploadTicketFile(existingRef.id, file);
-      if (anexo) await updateDoc(existingRef, { anexo, atualizadoEm: serverTimestamp() });
+      await updateDoc(existingRef, {
+        ...ticketStatusPayload('reaberto'),
+        ...requesterUpdatePayload(),
+        ...lastOccurrencePayload(observacao, 'reabertura', anexo),
+        ...(anexo ? { anexo } : {})
+      });
       await addSystemHistory(existingRef.id, observacao, 'reabertura', anexo ? { anexo } : {});
       showToast(warning || 'Já existia chamado desse produto para este formulário. Reabri e incluí a nova ocorrência.', warning ? 'error' : 'success');
       state.selectedTicketId = existingRef.id;
     } else {
-      await setDoc(deterministicRef, {
+      await setDoc(deterministicRef, createTicketBasePayload({
         tipoChamado,
         chave,
         chaveBusca,
         codigoProduto,
-        organizacaoId: org.id,
-        organizacaoNome: org.nome,
-        status: 'aberto',
-        criadoPor: state.user.uid,
-        criadoPorNome: selectedUserName(),
-        criadoPorEmail: state.user.email,
-        criadoEm: serverTimestamp(),
-        atualizadoEm: serverTimestamp()
-      });
+        org,
+        observacao,
+        tipoHistorico: 'criacao'
+      }));
 
       const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, file);
-      if (anexo) await updateDoc(deterministicRef, { anexo, atualizadoEm: serverTimestamp() });
-
-      await addDoc(collection(db, 'chamados', deterministicRef.id, 'historico'), {
-        texto: observacao,
-        tipo: 'criacao',
-        usuarioId: state.user.uid,
-        usuarioNome: selectedUserName(),
-        usuarioEmail: state.user.email,
-        criadoEm: serverTimestamp(),
-        ...(anexo ? { anexo } : {})
-      });
+      if (anexo) await updateDoc(deterministicRef, { ...lastOccurrencePayload(observacao, 'criacao', anexo), anexo });
+      await addSystemHistory(deterministicRef.id, observacao, 'criacao', anexo ? { anexo } : {});
 
       state.selectedTicketId = deterministicRef.id;
       showToast(warning || 'Chamado de produto criado com sucesso.', warning ? 'error' : 'success');
@@ -1883,7 +1906,7 @@ async function createProductTicket(event) {
     els.productTicketDialog.close();
   } catch (error) {
     const message = error?.code === 'permission-denied'
-      ? 'Permissão negada pelo Firestore. Publique o firestore.rules atualizado.'
+      ? 'Permissão negada pelo Firestore. Publique o firestore.rules v21 atualizado.'
       : error.message;
     showToast(`Erro ao salvar chamado: ${message}`, 'error');
   } finally {
@@ -1904,7 +1927,6 @@ function renderApp() {
   renderOrgSelects();
   ensureMainDates();
   startTicketsListener();
-  startUsersListener();
   refreshQueryBackedFilters();
 }
 
@@ -2650,6 +2672,7 @@ els.productTicketForm?.addEventListener('submit', createProductTicket);
 els.productObsInput?.addEventListener('input', updateProductObsPreview);
 els.adminBtn.addEventListener('click', () => {
   ensureReportDates();
+  startUsersListener();
   renderAdmin();
   els.adminDialog.showModal();
 });
