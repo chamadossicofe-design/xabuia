@@ -4,8 +4,8 @@
 // @version      2.6.0
 // @description  Abre/atualiza chamados Xabuia direto do card do Infradesk em modo leve: modo leve adaptativo: somente coluna Em Análise Terceiro, sem listeners, com refresh econômico.
 // @author       Xabuia
-// @match        https://asp.infradesk.app/backend/chamados/painel*
-// @match        https://asp.infradesk.app/backend/chamados*
+// @match        https://smbahia.infradesk.app/backend/chamados/painel*
+// @match        https://smbahia.infradesk.app/backend/chamados*
 // @run-at       document-end
 // @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
 // @homepageURL  https://chamadossicofe-design.github.io/xabuia/
@@ -1092,7 +1092,7 @@
       showToast('Conta Google conectada.', 'success');
     } catch (error) {
       const msg = error?.code === 'auth/unauthorized-domain'
-        ? 'Domínio asp.infradesk.app não autorizado no Firebase Authentication. Adicione esse domínio em Authentication > Settings > Authorized domains.'
+        ? 'Domínio smbahia.infradesk.app não autorizado no Firebase Authentication. Adicione esse domínio em Authentication > Settings > Authorized domains.'
         : (error.message || 'Erro ao conectar Google.');
       showToast(msg, 'error');
     }
