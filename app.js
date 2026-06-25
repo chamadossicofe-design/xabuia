@@ -151,7 +151,6 @@ const els = {
   orgFilter: $('orgFilter'),
   mainDateStart: $('mainDateStart'),
   mainDateEnd: $('mainDateEnd'),
-  clearMainDateBtn: $('clearMainDateBtn'),
   countAberto: $('countAberto'),
   countReaberto: $('countReaberto'),
   countTratamento: $('countTratamento'),
@@ -965,6 +964,17 @@ function localDateEndDate(value) {
 }
 
 function ticketMatchesMainDateFilter(ticket) {
+  const searchRaw = normalizeKey(els.searchInput?.value || '');
+  if (searchRaw.length >= 3) return true;
+
+  const selectedStatus = selectedStatusValue();
+  const ticketStatus = ticket?.status || 'aberto';
+
+  // A data padrão é para consulta/histórico. A fila ativa precisa aparecer inteira,
+  // mesmo quando o chamado foi aberto em outro dia.
+  if (isActivePanelStatus(selectedStatus)) return true;
+  if (selectedStatus === 'todos' && ['aberto', 'reaberto', 'em_tratamento'].includes(ticketStatus)) return true;
+
   if (!hasMainDateFilter()) return true;
   const dates = dateFilterValues();
   const start = dates.startValue ? localDateStart(dates.startValue) : null;
@@ -979,17 +989,31 @@ function ticketMatchesMainDateFilter(ticket) {
 function remoteFilterStatuses() {
   const status = selectedStatusValue();
 
-  if (status === 'ativos') return ['aberto', 'reaberto', 'em_tratamento'];
-  if (status === 'todos') return Object.keys(STATUS_LABELS);
-  if (STATUS_LABELS[status]) return [status];
-  return ['aberto', 'reaberto', 'em_tratamento'];
+  if (status === 'todos') return ['finalizado', 'informacoes_divergentes', 'devolver_recusar'];
+  if (isClosedStatus(status)) return [status];
+
+  // Status ativos/aberto/reaberto/em_tratamento vêm dos listeners leves.
+  return [];
+}
+
+function isClosedStatus(status) {
+  return ['finalizado', 'informacoes_divergentes', 'devolver_recusar'].includes(status);
+}
+
+function isActivePanelStatus(status) {
+  return ['ativos', 'aberto', 'reaberto', 'em_tratamento'].includes(status || 'ativos');
 }
 
 function needsRemoteFilterQuery() {
   const status = selectedStatusValue();
-  return hasMainDateFilter()
-    || status === 'todos'
-    || ['finalizado', 'informacoes_divergentes', 'devolver_recusar'].includes(status);
+
+  // A fila ativa fica sempre carregada pelo listener leve.
+  // A data padrão "hoje" não deve esconder chamados abertos/reabertos/em tratamento antigos.
+  if (isActivePanelStatus(status)) return false;
+
+  // "Todos" = fila ativa já carregada + fechados do período selecionado.
+  // Status fechado = consulta remota somente daquele status/período.
+  return status === 'todos' || isClosedStatus(status);
 }
 
 function buildRemoteFilterQueries() {
@@ -997,6 +1021,7 @@ function buildRemoteFilterQueries() {
   const statuses = remoteFilterStatuses();
   const typeValues = selectedTypeValuesForQuery();
   const orgValues = selectedOrgValuesForQuery();
+  ensureMainDates();
   const dates = dateFilterValues();
   const startDate = localDateStartDate(dates.startValue);
   const endDate = localDateEndDate(dates.endValue);
@@ -1072,7 +1097,7 @@ async function runRemoteFilterQuery() {
     console.error('Erro no filtro remoto:', error);
     setText(els.liveStatus, 'Erro no filtro');
     if (String(error?.message || '').includes('requires an index')) {
-      showToast('O Firestore pediu um índice para esse filtro. Clique no link do erro no console do navegador e crie o índice sugerido.', 'error');
+      showToast('O Firestore pediu um índice para esse filtro. Publique o arquivo firestore.indexes.json do pacote v20 ou clique no link do erro no console para criar o índice sugerido.', 'error');
       return;
     }
     showToast(`Erro ao filtrar chamados: ${error.message}`, 'error');
@@ -1877,8 +1902,10 @@ function renderApp() {
   els.productOrgWrap?.classList.toggle('hidden', !isOperatorOrAdmin());
   showOnly(els.appView);
   renderOrgSelects();
+  ensureMainDates();
   startTicketsListener();
   startUsersListener();
+  refreshQueryBackedFilters();
 }
 
 function renderAdmin() {
@@ -1965,6 +1992,12 @@ function firstDayMonthInputValue() {
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   return `${yyyy}-${mm}-01`;
+}
+
+function ensureMainDates() {
+  const today = todayInputValue();
+  if (els.mainDateStart && !els.mainDateStart.value) els.mainDateStart.value = today;
+  if (els.mainDateEnd && !els.mainDateEnd.value) els.mainDateEnd.value = today;
 }
 
 function ensureReportDates() {
@@ -2634,11 +2667,12 @@ els.orgFilter.addEventListener('change', (event) => {
   renderAndRefreshSearch();
 });
 
-els.mainDateStart?.addEventListener('change', renderAndRefreshSearch);
-els.mainDateEnd?.addEventListener('change', renderAndRefreshSearch);
-els.clearMainDateBtn?.addEventListener('click', () => {
-  if (els.mainDateStart) els.mainDateStart.value = '';
-  if (els.mainDateEnd) els.mainDateEnd.value = '';
+els.mainDateStart?.addEventListener('change', () => {
+  ensureMainDates();
+  renderAndRefreshSearch();
+});
+els.mainDateEnd?.addEventListener('change', () => {
+  ensureMainDates();
   renderAndRefreshSearch();
 });
 
