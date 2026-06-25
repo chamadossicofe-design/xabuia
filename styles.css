@@ -749,3 +749,211 @@ button { cursor: pointer; }
     width: 100% !important;
   }
 }
+
+
+/* V21 - ajuste visual dos filtros/data sem estourar a tela */
+:root {
+  --page-max: 1480px;
+}
+
+.app {
+  width: min(var(--page-max), 100%);
+  padding: 28px clamp(18px, 2vw, 32px);
+}
+
+.topbar {
+  margin-bottom: 20px;
+}
+
+.top-actions .btn {
+  min-width: 80px;
+}
+
+.top-actions .btn.primary {
+  min-width: 150px;
+}
+
+/* Barra de filtros: agora é grid, não flex. Evita o campo Organizações sair para fora do card. */
+.toolbar,
+.toolbar.toolbar-v12 {
+  display: grid;
+  grid-template-columns:
+    minmax(260px, 2fr)
+    minmax(145px, .8fr)
+    minmax(165px, .9fr)
+    minmax(150px, .78fr)
+    minmax(150px, .78fr)
+    minmax(170px, .95fr);
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  overflow: visible;
+}
+
+.toolbar .field,
+.toolbar-v12 .field,
+.toolbar .dropdown-field,
+.toolbar-v12 .dropdown-field,
+.toolbar .field.compact,
+.toolbar-v12 .field.compact,
+.search-field {
+  min-width: 0 !important;
+  width: 100%;
+}
+
+.field span {
+  line-height: 1.15;
+}
+
+.field input,
+.field select,
+.field textarea,
+.row-form input,
+.multi-dropdown summary {
+  min-height: 44px;
+}
+
+.field input[type="date"] {
+  padding-right: 10px;
+}
+
+.multi-dropdown-menu {
+  width: min(320px, 100vw - 48px);
+  max-width: 100%;
+}
+
+/* Cards de contagem mais alinhados e compactos. */
+.summary-grid {
+  grid-template-columns: repeat(7, minmax(120px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.metric {
+  min-height: 112px;
+  padding: 16px 18px;
+  display: grid;
+  align-content: start;
+}
+
+.metric span {
+  min-height: 34px;
+  line-height: 1.25;
+}
+
+.metric strong {
+  margin-top: 4px;
+  font-size: clamp(1.65rem, 2.2vw, 2rem);
+  line-height: 1;
+}
+
+/* Área principal: melhora proporção entre lista e detalhe. */
+.content-grid {
+  grid-template-columns: minmax(390px, 44fr) minmax(520px, 56fr);
+  gap: 16px;
+}
+
+.ticket-list-card,
+.detail-card {
+  min-height: 172px;
+}
+
+.ticket-list-card .section-head {
+  margin-bottom: 16px;
+}
+
+.detail-card.empty {
+  min-height: 260px;
+}
+
+/* Deixa a busca e os selects mais limpos visualmente. */
+.field input,
+.field select,
+.multi-dropdown summary {
+  border-color: #d8e2ee;
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: #7b8798;
+}
+
+.pill {
+  min-height: 26px;
+}
+
+/* Quando a tela apertar, quebra a toolbar com elegância. */
+@media (max-width: 1360px) {
+  .toolbar,
+  .toolbar.toolbar-v12 {
+    grid-template-columns:
+      minmax(280px, 1.5fr)
+      minmax(150px, .8fr)
+      minmax(170px, .8fr)
+      minmax(150px, .8fr)
+      minmax(150px, .8fr)
+      minmax(170px, .8fr);
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 1120px) {
+  .toolbar,
+  .toolbar.toolbar-v12 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .search-field {
+    grid-column: span 3;
+  }
+
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-card {
+    position: static;
+  }
+}
+
+@media (max-width: 760px) {
+  .app {
+    padding: 16px 12px;
+  }
+
+  .topbar {
+    align-items: stretch;
+  }
+
+  .toolbar,
+  .toolbar.toolbar-v12 {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .search-field {
+    grid-column: auto;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric {
+    min-height: 96px;
+  }
+
+  .metric span {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 460px) {
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
