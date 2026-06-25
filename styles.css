@@ -737,10 +737,6 @@ button { cursor: pointer; }
     min-width: 100%;
   }
 
-  .multi-dropdown-menu {
-    width: 100%;
-  }
-
   .occurrence-toolbar {
     display: grid;
   }
@@ -816,11 +812,6 @@ button { cursor: pointer; }
 
 .field input[type="date"] {
   padding-right: 10px;
-}
-
-.multi-dropdown-menu {
-  width: min(320px, 100vw - 48px);
-  max-width: 100%;
 }
 
 /* Cards de contagem mais alinhados e compactos. */
