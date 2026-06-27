@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Xabuia • Infradesk → Firebase direto
+// @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.0.0
-// @description  Abre/atualiza chamados Xabuia direto do card do Infradesk em modo leve: modo leve adaptativo: somente coluna Em Análise Terceiro, sem listeners, com refresh econômico.
+// @version      3.1.0
+// @description  Abre/atualiza chamados Xabuia direto do card do Infradesk. Não monitora desconhecidos; só acompanha chamados abertos pelo usuário e ativos na tela.
 // @author       Xabuia
 // @match        https://smbahia.infradesk.app/backend/chamados/painel*
 // @match        https://smbahia.infradesk.app/backend/chamados*
@@ -23,11 +23,13 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = '21.0.0-tempo-real-seletivo';
+  const XABUIA_VERSION = '23.0.0-manual-so-abertos-visiveis';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
-  const XABUIA_CACHE_KEY = 'xabuia_tm_cache_v21_seletivo';
+  const XABUIA_CACHE_KEY = 'xabuia_tm_cache_v23_manual';
   const XABUIA_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+  const XABUIA_PROFILE_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
+  const XABUIA_PROFILE_CACHE_PREFIX = 'xabuia_tm_profile_v23_';
   const XABUIA_TARGET_STATUS_ID = '6';
   const XABUIA_TARGET_STATUS_DESC = 'em analise terceiro';
 
@@ -42,7 +44,9 @@
 
   const TIPO_CHAMADO = 'nf_caminhao_porta';
   const TIPO_CHAMADO_NOME = 'NF • Caminhão na porta';
-  const STATUS_VALUES = ['aberto', 'reaberto', 'em_tratamento', 'informacoes_divergentes', 'devolver_recusar', 'finalizado'];
+  const ACTIVE_STATUS_VALUES = ['aberto', 'reaberto', 'em_tratamento'];
+  const FINAL_STATUS_VALUES = ['informacoes_divergentes', 'devolver_recusar', 'finalizado'];
+  const MAX_VISIBLE_ACTIVE_MONITORS = 8;
 
   const STATUS_LABELS = {
     aberto: 'Aberto',
@@ -58,11 +62,12 @@
     user: null,
     profile: null,
     profileLoading: null,
-    userTicketsUnsub: null,
+    ticketDocUnsubs: new Map(),
     userTicketsByChaveBusca: new Map(),
     userTicketsByChave: new Map(),
     activeCard: null,
     activeData: null,
+    activeTicketLookup: null,
     isSaving: false,
     scanTimer: null
   };
@@ -75,25 +80,19 @@
   const db = firebase.firestore(app);
   auth.languageCode = 'pt-BR';
 
-  auth.onAuthStateChanged(async (user) => {
+  auth.onAuthStateChanged((user) => {
     state.authReady = true;
     state.user = user || null;
-    state.profile = null;
+    state.profile = user ? readCachedProfile(user.uid) : null;
     state.userTicketsByChaveBusca.clear();
     state.userTicketsByChave.clear();
-    stopUserTicketListener();
+    state.activeTicketLookup = null;
+    stopAllTicketMonitors();
 
-    if (!user) {
-      clearAllCardBoxes();
-      renderAuthInfo();
-      scanCards();
-      return;
-    }
-
-    if (hasTargetCards()) {
-      await loadProfileIfNeeded();
-      startUserTicketListener();
-    }
+    // Modo v23: ficar logado no Google não abre listener no Firestore.
+    // A página só mostra os ícones. Perfil/chamado só são lidos quando o usuário clica no Xabuia
+    // ou quando existe cache local de chamado ativo já aberto por ele.
+    if (!user) clearAllCardBoxes();
 
     renderAuthInfo();
     scanCards();
@@ -102,12 +101,22 @@
   async function loadProfileIfNeeded(force = false) {
     if (!state.user) return null;
     if (!force && state.profile) return state.profile;
+
+    if (!force) {
+      const cached = readCachedProfile(state.user.uid);
+      if (cached) {
+        state.profile = cached;
+        return state.profile;
+      }
+    }
+
     if (state.profileLoading) return state.profileLoading;
 
     state.profileLoading = (async () => {
       try {
         const snap = await db.collection('usuarios').doc(state.user.uid).get();
         state.profile = snap.exists ? { id: snap.id, ...snap.data() } : null;
+        writeCachedProfile(state.user.uid, state.profile);
         return state.profile;
       } catch (error) {
         console.warn('[Xabuia] Erro ao carregar perfil:', error);
@@ -120,48 +129,89 @@
     return state.profileLoading;
   }
 
-  function startUserTicketListener() {
-    if (!state.user || !state.profile?.organizacaoId || state.profile.papel !== 'usuario' || state.profile.ativo === false) return;
-    if (state.userTicketsUnsub) return;
-
-    const q = db.collection('chamados')
-      .where('organizacaoId', '==', state.profile.organizacaoId)
-      .where('solicitantesIds', 'array-contains', state.user.uid)
-      .where('status', 'in', STATUS_VALUES);
-
-    state.userTicketsUnsub = q.onSnapshot((snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        const ticket = { id: change.doc.id, ...change.doc.data() };
-        const chave = digitsOnly(ticket.chave || '');
-        const chaveBusca = ticket.chaveBusca || (chave ? `${TIPO_CHAMADO}:${keySearchValue(chave)}` : '');
-
-        if (change.type === 'removed') {
-          if (chaveBusca) state.userTicketsByChaveBusca.delete(chaveBusca);
-          if (chave) state.userTicketsByChave.delete(chave);
-          removeCardBoxByChave(chave);
-          return;
-        }
-
-        if (chaveBusca) state.userTicketsByChaveBusca.set(chaveBusca, ticket);
-        if (chave) state.userTicketsByChave.set(chave, ticket);
-        rememberTicket(ticket);
-      });
-
-      renderTargetCardsFromKnownTickets();
-    }, (error) => {
-      console.warn('[Xabuia] Listener seletivo falhou:', error);
-      const msg = String(error?.message || '');
-      if (msg.includes('requires an index')) {
-        showToast('O Firestore pediu índice para o listener seletivo. Publique o firestore.indexes.json v21.', 'error');
-      }
-    });
+  function isActiveXabuiaStatus(status) {
+    return ACTIVE_STATUS_VALUES.includes(String(status || ''));
   }
 
-  function stopUserTicketListener() {
-    if (state.userTicketsUnsub) {
-      try { state.userTicketsUnsub(); } catch (_) {}
-      state.userTicketsUnsub = null;
+  function shouldMonitorTicket(ticket) {
+    return !!(ticket?.id && ticket?.chave && isActiveXabuiaStatus(ticket.status));
+  }
+
+  function rememberTicketInMaps(ticket) {
+    if (!ticket) return;
+    const chave = digitsOnly(ticket.chave || '');
+    const chaveBusca = ticket.chaveBusca || (chave ? typedChaveBusca(chave) : '');
+    if (chaveBusca) state.userTicketsByChaveBusca.set(chaveBusca, ticket);
+    if (chave) state.userTicketsByChave.set(chave, ticket);
+  }
+
+  function startTicketMonitor(ref, seedTicket = null) {
+    if (!ref || !seedTicket?.id || !shouldMonitorTicket(seedTicket)) return;
+    if (state.ticketDocUnsubs.has(ref.id)) return;
+
+    const unsub = ref.onSnapshot((snap) => {
+      if (!snap.exists) {
+        state.ticketDocUnsubs.get(ref.id)?.();
+        state.ticketDocUnsubs.delete(ref.id);
+        return;
+      }
+
+      const ticket = { id: snap.id, ...snap.data() };
+      rememberTicketInMaps(ticket);
+      rememberTicket(ticket);
+      renderTargetCardsFromKnownTickets();
+
+      // Quando sair dos status ativos, mostra o último status recebido e para de ouvir.
+      if (!isActiveXabuiaStatus(ticket.status)) {
+        const currentUnsub = state.ticketDocUnsubs.get(ref.id);
+        if (currentUnsub) {
+          try { currentUnsub(); } catch (_) {}
+          state.ticketDocUnsubs.delete(ref.id);
+        }
+      }
+    }, (error) => {
+      console.warn('[Xabuia] Monitor do chamado falhou:', error);
+      const currentUnsub = state.ticketDocUnsubs.get(ref.id);
+      if (currentUnsub) {
+        try { currentUnsub(); } catch (_) {}
+        state.ticketDocUnsubs.delete(ref.id);
+      }
+    });
+
+    state.ticketDocUnsubs.set(ref.id, unsub);
+  }
+
+  function stopAllTicketMonitors() {
+    state.ticketDocUnsubs.forEach((unsub) => {
+      try { unsub(); } catch (_) {}
+    });
+    state.ticketDocUnsubs.clear();
+  }
+
+  function syncVisibleKnownMonitors() {
+    if (!state.user || !state.profile?.organizacaoId) {
+      stopAllTicketMonitors();
+      return;
     }
+
+    const desired = new Map();
+    for (const card of targetCards()) {
+      if (desired.size >= MAX_VISIBLE_ACTIVE_MONITORS) break;
+      const data = parseCard(card);
+      const ticket = lookupKnownTicket(data.chave);
+      if (!shouldMonitorTicket(ticket)) continue;
+      const ref = db.collection('chamados').doc(ticket.id);
+      desired.set(ref.id, { ref, ticket });
+    }
+
+    state.ticketDocUnsubs.forEach((unsub, id) => {
+      if (!desired.has(id)) {
+        try { unsub(); } catch (_) {}
+        state.ticketDocUnsubs.delete(id);
+      }
+    });
+
+    desired.forEach(({ ref, ticket }) => startTicketMonitor(ref, ticket));
   }
 
   /********************************************************************
@@ -278,6 +328,26 @@
       || state.userTicketsByChaveBusca.get(legacyChaveBusca(clean))
       || state.userTicketsByChave.get(clean)
       || cachedTicket(clean);
+  }
+
+  function profileCacheKey(uid) { return `${XABUIA_PROFILE_CACHE_PREFIX}${uid || 'anon'}`; }
+  function readCachedProfile(uid) {
+    if (!uid) return null;
+    try {
+      const raw = localStorage.getItem(profileCacheKey(uid));
+      const entry = raw ? JSON.parse(raw) : null;
+      if (!entry?.profile || !entry.cachedAt) return null;
+      if (Date.now() - Number(entry.cachedAt) > XABUIA_PROFILE_CACHE_TTL_MS) return null;
+      return entry.profile;
+    } catch (_) {
+      return null;
+    }
+  }
+  function writeCachedProfile(uid, profile) {
+    if (!uid || !profile) return;
+    try {
+      localStorage.setItem(profileCacheKey(uid), JSON.stringify({ cachedAt: Date.now(), profile }));
+    } catch (_) {}
   }
 
   /********************************************************************
@@ -402,13 +472,10 @@
     cards.forEach((card) => {
       if (!isTargetCard(card)) { removeXabuiaUiFromCard(card); return; }
       if (card.dataset.xabuiaButtonReady !== '1') { card.dataset.xabuiaButtonReady = '1'; addXabuiaButton(card); }
+      // Não consulta Firestore para card desconhecido. Só renderiza cache/local já conhecido.
       renderCardFromKnownTicket(card);
     });
-    if (state.user && !state.profile && hasTargetCards()) {
-      loadProfileIfNeeded().then(() => { renderAuthInfo(); startUserTicketListener(); renderTargetCardsFromKnownTickets(); });
-    } else if (state.user && state.profile && hasTargetCards()) {
-      startUserTicketListener();
-    }
+    syncVisibleKnownMonitors();
   }
 
   function addXabuiaButton(card) {
@@ -477,9 +544,12 @@
     if (!isTargetCard(card)) { showToast('O Xabuia está habilitado apenas na coluna Em Análise Terceiro.', 'error'); return; }
     state.activeCard = card;
     state.activeData = parseCard(card);
+    state.activeTicketLookup = null;
     if (!state.activeData.chave || state.activeData.chave.length !== 44) { showToast('Não encontrei uma chave NF-e de 44 dígitos neste card.', 'error'); return; }
-    if (state.user && !state.profile) await loadProfileIfNeeded(true);
-    startUserTicketListener();
+
+    // Só agora, com ação explícita do usuário, lemos perfil e no máximo o documento deste card.
+    if (state.user && !state.profile) await loadProfileIfNeeded(false);
+
     const parsed = state.activeData.parsed;
     $('#xabuia-info').innerHTML = `
       <div><strong>Chave:</strong> ${escapeHtml(state.activeData.chave)}</div>
@@ -491,11 +561,35 @@
     renderAuthInfo();
     $('#xabuia-overlay').classList.add('open');
     setTimeout(() => $('#xabuia-comment')?.focus(), 50);
+
+    // Se já existe Xabuia para este card, descobre somente este documento e passa a monitorar
+    // apenas se o status for ativo. Card desconhecido nunca é varrido automaticamente.
+    if (canOpenFromInfradesk()) {
+      try {
+        const lookup = await findExistingTicketRef(state.activeData.chave);
+        state.activeTicketLookup = lookup;
+        if (lookup.exists && lookup.ticket) {
+          rememberTicketInMaps(lookup.ticket);
+          rememberTicket(lookup.ticket);
+          renderCardBox(card, lookup.ticket);
+          if (shouldMonitorTicket(lookup.ticket)) startTicketMonitor(lookup.ref, lookup.ticket);
+        }
+      } catch (error) {
+        console.warn('[Xabuia] Não consegui verificar o chamado aberto:', error);
+      }
+    }
   }
-  function closeModal() { $('#xabuia-overlay')?.classList.remove('open'); state.activeCard = null; state.activeData = null; state.isSaving = false; }
+  function closeModal() { $('#xabuia-overlay')?.classList.remove('open'); state.activeCard = null; state.activeData = null; state.activeTicketLookup = null; state.isSaving = false; }
   async function loginGoogle() {
-    try { const provider = new firebase.auth.GoogleAuthProvider(); await auth.signInWithPopup(provider); showToast('Conta Google conectada.', 'success'); }
-    catch (error) { showToast(error?.code === 'auth/unauthorized-domain' ? 'Domínio asp.infradesk.app não autorizado no Firebase Authentication.' : (error.message || 'Erro ao conectar Google.'), 'error'); }
+    try {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      await auth.signInWithPopup(provider);
+      await loadProfileIfNeeded(false);
+      renderAuthInfo();
+      showToast('Conta Google conectada.', 'success');
+    } catch (error) {
+      showToast(error?.code === 'auth/unauthorized-domain' ? 'Domínio asp.infradesk.app não autorizado no Firebase Authentication.' : (error.message || 'Erro ao conectar Google.'), 'error');
+    }
   }
 
   function ticketStatusPayload(status) {
@@ -552,7 +646,10 @@
     saveBtn.textContent = 'Salvando...';
 
     try {
-      const { ref, ticket: previousTicket, exists } = await findExistingTicketRef(data.chave);
+      const lookup = state.activeTicketLookup?.ref && digitsOnly(state.activeData?.chave || '') === digitsOnly(data.chave || '')
+        ? state.activeTicketLookup
+        : await findExistingTicketRef(data.chave);
+      const { ref, ticket: previousTicket, exists } = lookup;
       if (!ref) throw new Error('Referência do chamado inválida.');
       const previousStatus = previousTicket?.status || '';
       const finalStatus = statusAfterInfradeskOccurrence(exists, previousStatus);
@@ -585,10 +682,11 @@
       await ref.collection('historico').add({ texto: comment, tipo: historyType, usuarioId: state.user.uid, usuarioNome: selectedUserName(), usuarioEmail: state.user.email, criadoEm: now });
 
       const localTicket = { id: ref.id, ...(previousTicket || {}), chave: data.chave, chaveBusca: typedChaveBusca(data.chave), status: finalStatus, organizacaoId: state.profile.organizacaoId, ultimaOcorrenciaTexto: comment, ultimaOcorrenciaTipo: historyType, ultimaOcorrenciaUsuarioNome: selectedUserName(), ultimaOcorrenciaUsuarioEmail: state.user.email, ultimaOcorrenciaEm: new Date(), atualizadoEm: new Date() };
-      state.userTicketsByChaveBusca.set(localTicket.chaveBusca, localTicket);
-      state.userTicketsByChave.set(digitsOnly(data.chave), localTicket);
+      rememberTicketInMaps(localTicket);
       rememberTicket(localTicket);
       if (card) renderCardBox(card, localTicket);
+      if (shouldMonitorTicket(localTicket)) startTicketMonitor(ref, localTicket);
+      else syncVisibleKnownMonitors();
 
       showToast(!exists ? 'Xabuia aberta com ocorrência.' : finalStatus === previousStatus ? 'Ocorrência adicionada sem alterar o status.' : 'Xabuia reaberta com ocorrência.', 'success');
       closeModal();
@@ -617,7 +715,7 @@
     observer.observe(document.body, { childList: true, subtree: true });
     window.addEventListener('focus', scanCards);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) scanCards(); });
-    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. 1 listener seletivo por usuário, sem polling.`);
+    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Modo manual: zero monitoramento de cards desconhecidos; só chamados ativos já abertos.`);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
