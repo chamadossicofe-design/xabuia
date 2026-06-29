@@ -46,7 +46,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V27-historico-completo';
+const APP_VERSION = 'V27.1-historico-core-seguro';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -921,6 +921,35 @@ function queueOperatorEvent(batch, ticket, statusNovo, texto = '') {
   const payload = operatorEventPayload(ticket, statusNovo, texto);
   if (!payload) return;
   batch.set(doc(collection(db, 'operador_eventos')), payload);
+}
+
+
+async function tryCommitStatusTimelineEvent(ticketRef, ticket, statusNovo, texto = '', updatePayload = null) {
+  if (!ticketRef || !ticket?.id || !statusNovo || statusNovo === ticket.status) return '';
+
+  try {
+    const eventBatch = writeBatch(db);
+    queueStatusTimelineEvents(eventBatch, ticketRef, ticket, statusNovo, texto, updatePayload);
+    await eventBatch.commit();
+    return '';
+  } catch (error) {
+    console.warn('Ocorrência salva, mas status_eventos não foi gravado:', error);
+    return 'Linha do tempo complementar não foi gravada.';
+  }
+}
+
+async function tryCommitOperatorEvent(ticket, statusNovo, texto = '') {
+  if (!ticket?.id || !statusNovo || statusNovo === ticket.status) return '';
+
+  try {
+    const eventBatch = writeBatch(db);
+    queueOperatorEvent(eventBatch, ticket, statusNovo, texto);
+    await eventBatch.commit();
+    return '';
+  } catch (error) {
+    console.warn('Ocorrência salva, mas operador_eventos não foi gravado:', error);
+    return 'Relatório complementar do operador não foi gravado.';
+  }
 }
 
 async function addOperatorEvent(ticket, statusNovo, texto = '') {
@@ -1889,13 +1918,15 @@ async function addHistory(ticket) {
     const batch = writeBatch(db);
     batch.update(ticketRef, updatePayload);
     batch.set(doc(collection(db, 'chamados', ticketId, 'historico')), historyPayload(textoFinal, historyType, anexo ? { anexo } : {}));
-
-    if (statusChanged && typeof ticket === 'object') {
-      queueStatusTimelineEvents(batch, ticketRef, ticket, selectedStatus, textoFinal, updatePayload);
-      queueOperatorEvent(batch, ticket, selectedStatus, textoFinal);
-    }
-
     await batch.commit();
+
+    let eventWarning = '';
+    if (statusChanged && typeof ticket === 'object') {
+      eventWarning = [
+        await tryCommitStatusTimelineEvent(ticketRef, ticket, selectedStatus, textoFinal, updatePayload),
+        await tryCommitOperatorEvent(ticket, selectedStatus, textoFinal)
+      ].filter(Boolean).join(' ');
+    }
 
     textarea.value = '';
     clearHistoryAttachment();
@@ -1903,10 +1934,11 @@ async function addHistory(ticket) {
     await Promise.all([loadHistory(ticketId), loadStatusTimeline(ticketId)]);
     state.historyLoadedFor = ticketId;
 
+    const finalWarning = [warning, eventWarning].filter(Boolean).join(' ');
     if (statusChanged) {
-      showToast(warning || `Status e ocorrência salvos: ${STATUS_LABELS[selectedStatus]}.`, warning ? 'error' : 'success');
+      showToast(finalWarning || `Status e ocorrência salvos: ${STATUS_LABELS[selectedStatus]}.`, finalWarning ? 'error' : 'success');
     } else {
-      showToast(warning || 'Ocorrência adicionada.', warning ? 'error' : 'success');
+      showToast(finalWarning || 'Ocorrência adicionada.', finalWarning ? 'error' : 'success');
     }
   } catch (error) {
     console.error('Erro ao salvar ocorrência completa:', error);
@@ -2023,9 +2055,10 @@ async function reopenTicket(ticket, texto = 'Chamado reaberto.') {
   const batch = writeBatch(db);
   batch.update(ticketRef, updatePayload);
   batch.set(doc(collection(db, 'chamados', ticket.id, 'historico')), historyPayload(texto, 'reabertura'));
-  queueStatusTimelineEvents(batch, ticketRef, ticket, 'reaberto', texto, updatePayload);
-  queueOperatorEvent(batch, ticket, 'reaberto', texto);
   await batch.commit();
+
+  await tryCommitStatusTimelineEvent(ticketRef, ticket, 'reaberto', texto, updatePayload);
+  await tryCommitOperatorEvent(ticket, 'reaberto', texto);
 
   state.historyLoadedFor = null;
   await Promise.all([loadHistory(ticket.id), loadStatusTimeline(ticket.id)]).catch(() => {});
@@ -2045,9 +2078,10 @@ async function updateTicketStatus(ticket, status) {
   const batch = writeBatch(db);
   batch.update(ticketRef, updatePayload);
   batch.set(doc(collection(db, 'chamados', ticket.id, 'historico')), historyPayload(texto, tipo));
-  queueStatusTimelineEvents(batch, ticketRef, ticket, status, texto, updatePayload);
-  queueOperatorEvent(batch, ticket, status, texto);
   await batch.commit();
+
+  await tryCommitStatusTimelineEvent(ticketRef, ticket, status, texto, updatePayload);
+  await tryCommitOperatorEvent(ticket, status, texto);
 
   state.historyLoadedFor = null;
   await Promise.all([loadHistory(ticket.id), loadStatusTimeline(ticket.id)]).catch(() => {});
@@ -2126,9 +2160,10 @@ async function createTicket(event) {
       const batch = writeBatch(db);
       batch.update(existingRef, updatePayload);
       batch.set(doc(collection(db, 'chamados', existingRef.id, 'historico')), historyPayload(observacao, 'reabertura', anexo ? { anexo } : {}));
-      queueStatusTimelineEvents(batch, existingRef, existingTicket, 'reaberto', observacao, updatePayload);
-      queueOperatorEvent(batch, existingTicket, 'reaberto', observacao);
       await batch.commit();
+
+      await tryCommitStatusTimelineEvent(existingRef, existingTicket, 'reaberto', observacao, updatePayload);
+      await tryCommitOperatorEvent(existingTicket, 'reaberto', observacao);
 
       showToast(warning || 'Já existia chamado com essa chave e formulário. Reabri o mesmo chamado e incluí a nova ocorrência.', warning ? 'error' : 'success');
       state.selectedTicketId = existingRef.id;
@@ -2143,8 +2178,9 @@ async function createTicket(event) {
 
       const batch = writeBatch(db);
       batch.set(doc(collection(db, 'chamados', deterministicRef.id, 'historico')), historyPayload(observacao, tipoHistorico, anexo ? { anexo } : {}));
-      queueStatusTimelineEvents(batch, deterministicRef, null, 'aberto', observacao, createPayload);
       await batch.commit();
+
+      await tryCommitStatusTimelineEvent(deterministicRef, { id: deterministicRef.id, ...createPayload, status: 'aberto' }, 'aberto', observacao, createPayload);
 
       state.selectedTicketId = deterministicRef.id;
       showToast(warning || 'Chamado criado com sucesso.', warning ? 'error' : 'success');
@@ -2234,9 +2270,10 @@ async function createProductTicket(event) {
       const batch = writeBatch(db);
       batch.update(existingRef, updatePayload);
       batch.set(doc(collection(db, 'chamados', existingRef.id, 'historico')), historyPayload(observacao, 'reabertura', anexo ? { anexo } : {}));
-      queueStatusTimelineEvents(batch, existingRef, existingTicket, 'reaberto', observacao, updatePayload);
-      queueOperatorEvent(batch, existingTicket, 'reaberto', observacao);
       await batch.commit();
+
+      await tryCommitStatusTimelineEvent(existingRef, existingTicket, 'reaberto', observacao, updatePayload);
+      await tryCommitOperatorEvent(existingTicket, 'reaberto', observacao);
 
       showToast(warning || 'Já existia chamado desse produto para este formulário. Reabri e incluí a nova ocorrência.', warning ? 'error' : 'success');
       state.selectedTicketId = existingRef.id;
@@ -2259,8 +2296,9 @@ async function createProductTicket(event) {
 
       const batch = writeBatch(db);
       batch.set(doc(collection(db, 'chamados', deterministicRef.id, 'historico')), historyPayload(observacao, 'criacao', anexo ? { anexo } : {}));
-      queueStatusTimelineEvents(batch, deterministicRef, null, 'aberto', observacao, createPayload);
       await batch.commit();
+
+      await tryCommitStatusTimelineEvent(deterministicRef, { id: deterministicRef.id, ...createPayload, status: 'aberto' }, 'aberto', observacao, createPayload);
 
       state.selectedTicketId = deterministicRef.id;
       showToast(warning || 'Chamado de produto criado com sucesso.', warning ? 'error' : 'success');
