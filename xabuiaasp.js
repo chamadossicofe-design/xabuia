@@ -13,6 +13,7 @@
 // @downloadURL  https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js
 // @grant        GM_info
 // @grant        GM_xmlhttpRequest
+// @grant        GM_setClipboard
 // @connect      chamadossicofe-design.github.io
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
@@ -25,7 +26,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.2.4';
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || ((typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.2.4');
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
   const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
@@ -88,8 +89,18 @@
     return `${url}${String(url).includes('?') ? '&' : '?'}xabuia_update_check=${Date.now()}`;
   }
 
-  function tampermonkeyInstallUrl(url) {
-    return `https://www.tampermonkey.net/script_installation.php#url=${encodeURIComponent(cacheBustUrl(url))}`;
+  function copyUpdateUrlToClipboard() {
+    try {
+      if (typeof GM_setClipboard === 'function') GM_setClipboard(XABUIA_UPDATE_URL, 'text');
+      else navigator.clipboard?.writeText?.(XABUIA_UPDATE_URL);
+    } catch (_) {}
+  }
+
+  function openUpdateUrl() {
+    copyUpdateUrlToClipboard();
+    // Abre o link oficial sem passar pela tela intermediária do Tampermonkey.
+    // Em alguns Chrome/Tampermonkey, script_installation.php gera chrome-extension://... quebrado.
+    window.open(XABUIA_UPDATE_URL, '_blank', 'noopener,noreferrer');
   }
 
   function getRemoteScriptText(url) {
@@ -157,9 +168,9 @@
             <span>Instalada: <strong id="xabuia-installed-version"></strong></span>
             <span>Publicada: <strong id="xabuia-latest-version"></strong></span>
           </div>
-          <button id="xabuia-update-now" type="button">Atualizar agora</button>
+          <button id="xabuia-update-now" type="button">Abrir link oficial e copiar URL</button>
           <button id="xabuia-reload-after-update" type="button">Já atualizei, recarregar página</button>
-          <small>Na tela do Tampermonkey, clique em Atualizar/Instalar. Depois recarregue esta página do Infradesk.</small>
+          <small>Se abrir apenas o código, clique no ícone do Tampermonkey e use Verificar atualizações. O link oficial já foi copiado para facilitar.</small>
         </div>
       `;
 
@@ -181,7 +192,7 @@
       document.body.appendChild(overlay);
 
       document.getElementById('xabuia-update-now')?.addEventListener('click', () => {
-        window.open(tampermonkeyInstallUrl(XABUIA_UPDATE_URL), '_blank', 'noopener,noreferrer');
+        openUpdateUrl();
       });
 
       document.getElementById('xabuia-reload-after-update')?.addEventListener('click', () => {
