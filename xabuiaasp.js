@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.0
+// @version      3.2.1
 // @description  Abre/atualiza chamados Xabuia direto do card do Infradesk. Não monitora desconhecidos; só acompanha chamados abertos pelo usuário e ativos na tela.
 // @author       Xabuia
 // @match        https://asp.infradesk.app/backend/chamados/painel*
@@ -25,7 +25,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.2.0';
+  const XABUIA_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.2.1';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
   const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
@@ -217,6 +217,8 @@
         const latestVersion = extractMetaVersion(remoteText);
 
         if (!latestVersion) throw new Error('Não encontrei @version no arquivo publicado.');
+
+        console.log(`[Xabuia] Atualização consultada no GitHub. Instalada: ${XABUIA_VERSION}. Publicada: ${latestVersion}.`);
 
         writeUpdateCache({ lastCheckAt: now, latestVersion });
         versionGateState.latestVersion = latestVersion;
@@ -918,7 +920,10 @@
       checkXabuiaLatestVersion(true);
       return;
     }
-    checkXabuiaLatestVersion(false);
+    // Força uma consulta real ao GitHub quando a página carrega.
+    // Isso evita depender do agendamento automático do Tampermonkey.
+    checkXabuiaLatestVersion(true);
+    window.setInterval(() => checkXabuiaLatestVersion(true), XABUIA_VERSION_CHECK_EVERY_MS);
     injectStyles();
     ensureModal();
     scanCards();
