@@ -115,6 +115,8 @@
 
       <div class="top-actions">
         <button id="newTicketBtn" class="btn primary" type="button">Novo chamado</button>
+        <button id="adminQueryActiveBtn" class="btn primary hidden" type="button">Consultar ativos</button>
+        <button id="adminClearQueryBtn" class="btn ghost hidden" type="button">Limpar consulta</button>
         <button id="adminBtn" class="btn ghost hidden" type="button">Admin</button>
         <button id="logoutBtn" class="btn ghost" type="button">Sair</button>
       </div>
@@ -410,6 +412,27 @@
             <button id="operatorReportBtn" class="btn primary" type="button">Gerar relatório</button>
           </div>
           <div id="operatorReportBox" class="report-box empty-state">Informe o período e clique em Gerar relatório.</div>
+        </section>
+
+        <section class="report-section sla-section">
+          <h3>Alertas de tempo dos chamados ativos</h3>
+          <p class="muted">Configure quantos minutos cada status pode ficar parado. A configuração fica salva no navegador do admin e não consome Firestore.</p>
+          <div class="report-filters sla-filters">
+            <label class="field">
+              <span>Aberto acima de</span>
+              <input id="slaAbertoMin" type="number" min="1" step="1" placeholder="30" />
+            </label>
+            <label class="field">
+              <span>Reaberto acima de</span>
+              <input id="slaReabertoMin" type="number" min="1" step="1" placeholder="30" />
+            </label>
+            <label class="field">
+              <span>Em tratamento acima de</span>
+              <input id="slaTratamentoMin" type="number" min="1" step="1" placeholder="60" />
+            </label>
+            <button id="adminSlaQueryBtn" class="btn primary" type="button">Consultar SLA</button>
+          </div>
+          <div id="adminSlaReportBox" class="report-box empty-state">Informe os minutos e clique em Consultar SLA.</div>
         </section>
       </div>
     </div>

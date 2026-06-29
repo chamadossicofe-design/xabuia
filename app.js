@@ -45,7 +45,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V21-firestore-economico';
+const APP_VERSION = 'V22-admin-consulta-sla';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -91,6 +91,8 @@ const CLOSED_STATUSES = ['finalizado', 'informacoes_divergentes', 'devolver_recu
 const ALL_TICKET_STATUSES = [...ACTIVE_STATUSES, ...CLOSED_STATUSES];
 const LIVE_OPEN_LIMIT = 250;
 const LIVE_TREATMENT_LIMIT = 250;
+const ADMIN_ACTIVE_QUERY_LIMIT_PER_STATUS = 200;
+const ADMIN_SLA_SETTINGS_KEY = 'xabuia_admin_sla_v1';
 
 const HISTORY_TYPE_LABELS = {
   criacao: 'Criação',
@@ -148,6 +150,8 @@ const els = {
   newTicketBtn: $('newTicketBtn'),
   adminBtn: $('adminBtn'),
   logoutBtn: $('logoutBtn'),
+  adminQueryActiveBtn: $('adminQueryActiveBtn'),
+  adminClearQueryBtn: $('adminClearQueryBtn'),
   searchInput: $('searchInput'),
   ticketTypeFilter: $('ticketTypeFilter'),
   statusFilter: $('statusFilter'),
@@ -211,7 +215,12 @@ const els = {
   operatorReportStart: $('operatorReportStart'),
   operatorReportEnd: $('operatorReportEnd'),
   operatorReportBtn: $('operatorReportBtn'),
-  operatorReportBox: $('operatorReportBox')
+  operatorReportBox: $('operatorReportBox'),
+  slaAbertoMin: $('slaAbertoMin'),
+  slaReabertoMin: $('slaReabertoMin'),
+  slaTratamentoMin: $('slaTratamentoMin'),
+  adminSlaQueryBtn: $('adminSlaQueryBtn'),
+  adminSlaReportBox: $('adminSlaReportBox')
 };
 
 const state = {
@@ -269,6 +278,10 @@ function isBootstrapAdmin(user = state.user) {
 
 function isAdmin() {
   return state.profile?.papel === 'admin' || isBootstrapAdmin();
+}
+
+function isOperator() {
+  return state.profile?.papel === 'operador';
 }
 
 function isOperatorOrAdmin() {
@@ -445,6 +458,34 @@ function timestampMillis(value) {
   if (typeof value.toDate === 'function') return value.toDate().getTime();
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function minutesBetween(startMs, endMs = Date.now()) {
+  if (!startMs) return null;
+  return Math.max(0, Math.floor((endMs - startMs) / 60000));
+}
+
+function formatMinutes(minutes) {
+  if (minutes == null || !Number.isFinite(minutes)) return '—';
+  const total = Math.max(0, Math.round(minutes));
+  const days = Math.floor(total / 1440);
+  const hours = Math.floor((total % 1440) / 60);
+  const mins = total % 60;
+  if (days > 0) return `${days}d ${hours}h ${mins}min`;
+  if (hours > 0) return `${hours}h ${mins}min`;
+  return `${mins}min`;
+}
+
+function statusStartedAtMillis(ticket, status = ticket?.status) {
+  if (!ticket) return 0;
+  if (status === 'reaberto') return timestampMillis(ticket.reabertoEm) || timestampMillis(ticket.atualizadoEm) || timestampMillis(ticket.criadoEm);
+  if (status === 'em_tratamento') return timestampMillis(ticket.tratamentoIniciadoEm) || timestampMillis(ticket.atualizadoEm) || timestampMillis(ticket.criadoEm);
+  if (status === 'aberto') return timestampMillis(ticket.criadoEm) || timestampMillis(ticket.atualizadoEm);
+  return timestampMillis(ticket.atualizadoEm) || timestampMillis(ticket.criadoEm);
+}
+
+function ticketAgeMinutes(ticket) {
+  return minutesBetween(statusStartedAtMillis(ticket), Date.now());
 }
 
 function roleLabel(role) {
@@ -721,6 +762,84 @@ async function addHistoryDoc(ticketId, texto, tipo = 'observacao', extra = {}) {
   });
 }
 
+function eventTypeForStatus(status) {
+  if (status === 'em_tratamento') return 'em_tratamento';
+  if (status === 'finalizado') return 'finalizado';
+  if (status === 'reaberto') return 'reaberto';
+  if (status === 'informacoes_divergentes') return 'informacoes_divergentes';
+  if (status === 'devolver_recusar') return 'devolver_recusar';
+  return 'status';
+}
+
+async function addOperatorEvent(ticket, statusNovo, texto = '') {
+  if (!ticket?.id || !isOperatorOrAdmin() || !state.user?.uid) return;
+
+  const statusAnterior = ticket.status || 'aberto';
+  const tipo = eventTypeForStatus(statusNovo);
+  if (tipo === 'status') return;
+
+  try {
+    await addDoc(collection(db, 'operador_eventos'), {
+      chamadoId: ticket.id,
+      tipo,
+      statusAnterior,
+      statusNovo,
+      operadorId: state.user.uid,
+      operadorNome: selectedUserName(),
+      operadorEmail: state.user.email || '',
+      organizacaoId: ticket.organizacaoId || '',
+      organizacaoNome: ticket.organizacaoNome || '',
+      tipoChamado: ticket.tipoChamado || 'nota_fiscal',
+      chave: ticket.chave || ticket.codigoProduto || '',
+      titulo: ticketTitle(ticket),
+      texto: normalizeKey(texto || ''),
+      duracaoStatusAnteriorMin: ticketAgeMinutes(ticket),
+      criadoEm: serverTimestamp()
+    });
+  } catch (error) {
+    console.warn('Evento do operador não foi gravado. O chamado continuou salvo:', error);
+  }
+}
+
+function readAdminSlaSettings() {
+  const defaults = { aberto: 30, reaberto: 30, em_tratamento: 60 };
+  try {
+    const raw = localStorage.getItem(ADMIN_SLA_SETTINGS_KEY);
+    const saved = raw ? JSON.parse(raw) : {};
+    return {
+      aberto: Math.max(1, Number(saved.aberto || defaults.aberto)),
+      reaberto: Math.max(1, Number(saved.reaberto || defaults.reaberto)),
+      em_tratamento: Math.max(1, Number(saved.em_tratamento || defaults.em_tratamento))
+    };
+  } catch (_) {
+    return defaults;
+  }
+}
+
+function writeAdminSlaSettings(settings) {
+  try {
+    localStorage.setItem(ADMIN_SLA_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (_) {}
+}
+
+function ensureAdminSlaControls() {
+  if (!els.slaAbertoMin || !els.slaReabertoMin || !els.slaTratamentoMin) return;
+  const settings = readAdminSlaSettings();
+  if (!els.slaAbertoMin.value) els.slaAbertoMin.value = String(settings.aberto);
+  if (!els.slaReabertoMin.value) els.slaReabertoMin.value = String(settings.reaberto);
+  if (!els.slaTratamentoMin.value) els.slaTratamentoMin.value = String(settings.em_tratamento);
+}
+
+function currentAdminSlaSettingsFromInputs() {
+  const settings = {
+    aberto: Math.max(1, Number(els.slaAbertoMin?.value || 30)),
+    reaberto: Math.max(1, Number(els.slaReabertoMin?.value || 30)),
+    em_tratamento: Math.max(1, Number(els.slaTratamentoMin?.value || 60))
+  };
+  writeAdminSlaSettings(settings);
+  return settings;
+}
+
 
 async function loadOrCreateProfile(user) {
   const profileRef = doc(db, 'usuarios', user.uid);
@@ -919,11 +1038,18 @@ function startTicketsListener() {
 
   const chamadosRef = collection(db, 'chamados');
 
-  // V21 econômico:
-  // - operador/admin acompanha só a fila aberta/reaberta + os próprios em tratamento;
-  // - usuário comum acompanha somente chamados onde ele está em solicitantesIds;
-  // - nada de listener de coleção inteira para usuário comum.
-  if (isOperatorOrAdmin()) {
+  // Admin não fica ouvindo chamados o dia todo.
+  // Ele consulta manualmente pelo botão "Consultar ativos" ou pelos relatórios.
+  if (isAdmin()) {
+    state.tickets = [];
+    renderTickets();
+    setText(els.liveStatus, 'Admin: consulta manual');
+    return;
+  }
+
+  // Operador acompanha ao vivo só a fila aberta/reaberta + os próprios em tratamento.
+  // Usuário comum acompanha somente chamados onde ele está em solicitantesIds.
+  if (isOperator()) {
     state.unsubTickets = [
       listenTicketBucket(
         'fila_aberta_reaberta',
@@ -1579,6 +1705,9 @@ async function addHistory(ticket) {
 
     await updateDoc(doc(db, 'chamados', ticketId), updatePayload);
     await addHistoryDoc(ticketId, textoFinal, historyType, anexo ? { anexo } : {});
+    if (statusChanged && typeof ticket === 'object') {
+      await addOperatorEvent(ticket, selectedStatus, textoFinal);
+    }
 
     textarea.value = '';
     clearHistoryAttachment();
@@ -1698,6 +1827,7 @@ async function reopenTicket(ticket, texto = 'Chamado reaberto.') {
     ...lastOccurrencePayload(texto, 'reabertura')
   });
   await addSystemHistory(ticket.id, texto, 'reabertura');
+  if (isOperatorOrAdmin()) await addOperatorEvent(ticket, 'reaberto', texto);
   showToast('Chamado reaberto.', 'success');
 }
 
@@ -1711,6 +1841,7 @@ async function updateTicketStatus(ticket, status) {
   });
 
   await addSystemHistory(ticket.id, texto, tipo);
+  await addOperatorEvent(ticket, status, texto);
 
   showToast('Status atualizado.', 'success');
 }
@@ -1919,6 +2050,8 @@ function renderApp() {
   const profile = state.profile;
   els.userLine.textContent = `${profile.nome || state.user.email} • ${roleLabel(profile.papel)} • ${profile.organizacaoNome || 'Todas as organizações'}`;
   els.adminBtn.classList.toggle('hidden', !isAdmin());
+  els.adminQueryActiveBtn?.classList.toggle('hidden', !isAdmin());
+  els.adminClearQueryBtn?.classList.toggle('hidden', !isAdmin());
   els.adminPanel?.classList.toggle('hidden', true);
   els.orgFilterWrap.classList.toggle('hidden', !isOperatorOrAdmin());
   els.ticketOrgWrap?.classList.toggle('hidden', !isOperatorOrAdmin());
@@ -1932,6 +2065,7 @@ function renderApp() {
 
 function renderAdmin() {
   if (!isAdmin()) return;
+  ensureAdminSlaControls();
 
   const orgHtml = state.orgs.length ? state.orgs.map((org) => `
     <div class="mini-item">
@@ -2038,6 +2172,134 @@ function operatorReportName(uid, name, email) {
   return user?.nome || user?.email || email || 'Sem operador';
 }
 
+async function fetchAdminActiveTickets() {
+  if (!isAdmin()) return [];
+  const chamadosRef = collection(db, 'chamados');
+  const found = new Map();
+
+  for (const status of ACTIVE_STATUSES) {
+    const snapshot = await getDocs(query(
+      chamadosRef,
+      where('status', '==', status),
+      limit(ADMIN_ACTIVE_QUERY_LIMIT_PER_STATUS)
+    ));
+    snapshot.docs.forEach((d) => found.set(d.id, { id: d.id, ...d.data() }));
+  }
+
+  return [...found.values()].sort((a, b) => timestampMillis(b.atualizadoEm) - timestampMillis(a.atualizadoEm));
+}
+
+async function adminQueryActiveTickets() {
+  if (!isAdmin()) return;
+  const btn = els.adminQueryActiveBtn;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Consultando...';
+  }
+  setText(els.liveStatus, 'Consultando ativos...');
+
+  try {
+    const tickets = await fetchAdminActiveTickets();
+    state.ticketBuckets = { admin_consulta_ativos: tickets };
+    mergeTicketBuckets();
+    setText(els.liveStatus, `Consulta admin: ${tickets.length} ativo(s)`);
+    showToast(`${tickets.length} chamado(s) ativo(s) carregado(s) para o admin.`, 'success');
+  } catch (error) {
+    console.error('Erro na consulta admin:', error);
+    setText(els.liveStatus, 'Erro na consulta admin');
+    showToast(`Erro ao consultar ativos: ${error.message}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Consultar ativos';
+    }
+  }
+}
+
+function adminClearManualQuery() {
+  if (!isAdmin()) return;
+  stopTicketsListener();
+  state.tickets = [];
+  state.selectedTicketId = null;
+  renderTickets();
+  renderTicketDetail(null);
+  setText(els.liveStatus, 'Admin: consulta manual');
+}
+
+function rowSlaLimit(ticket, settings) {
+  if (ticket.status === 'reaberto') return settings.reaberto;
+  if (ticket.status === 'em_tratamento') return settings.em_tratamento;
+  return settings.aberto;
+}
+
+async function generateAdminSlaReport() {
+  if (!isAdmin() || !els.adminSlaReportBox) return;
+  const settings = currentAdminSlaSettingsFromInputs();
+  const btn = els.adminSlaQueryBtn;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Consultando...';
+  }
+
+  els.adminSlaReportBox.innerHTML = '<div class="empty-state">Consultando chamados ativos e calculando tempo na tela...</div>';
+
+  try {
+    const tickets = await fetchAdminActiveTickets();
+    const overdue = tickets
+      .map((ticket) => ({ ticket, age: ticketAgeMinutes(ticket), limit: rowSlaLimit(ticket, settings) }))
+      .filter((row) => row.age != null && row.age >= row.limit)
+      .sort((a, b) => b.age - a.age);
+
+    const summary = ACTIVE_STATUSES.map((status) => {
+      const rows = overdue.filter((row) => row.ticket.status === status);
+      return `${STATUS_LABELS[status]}: ${rows.length}`;
+    }).join(' • ');
+
+    if (!overdue.length) {
+      els.adminSlaReportBox.innerHTML = `<div class="empty-state">Nenhum chamado acima do limite configurado. ${escapeHtml(summary)}</div>`;
+      return;
+    }
+
+    els.adminSlaReportBox.innerHTML = `
+      <p class="muted"><strong>${overdue.length}</strong> chamado(s) acima do limite. ${escapeHtml(summary)}</p>
+      <div class="table-wrap">
+        <table class="report-table sla-table">
+          <thead>
+            <tr>
+              <th>Chamado</th>
+              <th>Status</th>
+              <th>Tempo</th>
+              <th>Limite</th>
+              <th>Operador</th>
+              <th>Organização</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${overdue.map(({ ticket, age, limit: rowLimit }) => `
+              <tr>
+                <td><strong>${escapeHtml(ticketTitle(ticket))}</strong><br><small>${escapeHtml(ticketRawLine(ticket))}</small></td>
+                <td>${statusBadge(ticket.status)}</td>
+                <td><strong>${escapeHtml(formatMinutes(age))}</strong></td>
+                <td>${escapeHtml(formatMinutes(rowLimit))}</td>
+                <td>${escapeHtml(ticket.operadorTratamentoNome || ticket.operadorTratamentoEmail || '—')}</td>
+                <td>${escapeHtml(ticket.organizacaoNome || '—')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Erro no relatório de SLA:', error);
+    els.adminSlaReportBox.innerHTML = `<div class="empty-state">Erro ao consultar SLA: ${escapeHtml(error.message)}</div>`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Consultar SLA';
+    }
+  }
+}
+
 async function generateOperatorReport() {
   if (!isAdmin() || !els.operatorReportBox) return;
   ensureReportDates();
@@ -2058,7 +2320,7 @@ async function generateOperatorReport() {
     btn.textContent = 'Gerando...';
   }
 
-  els.operatorReportBox.innerHTML = '<div class="empty-state">Consultando Firestore apenas no período informado...</div>';
+  els.operatorReportBox.innerHTML = '<div class="empty-state">Consultando eventos dos operadores no período informado...</div>';
 
   const rows = new Map();
   const ensure = (uid, name, email) => {
@@ -2072,13 +2334,25 @@ async function generateOperatorReport() {
         finalizados: 0,
         reabertos: 0,
         divergentes: 0,
-        devolvidos: 0
+        devolvidos: 0,
+        duracoes: []
       });
     }
     return rows.get(key);
   };
 
-  async function countByDateField(field, applyTicket) {
+  function addRowEvent(event) {
+    const row = ensure(event.operadorId, event.operadorNome, event.operadorEmail);
+    if (event.tipo === 'em_tratamento') row.iniciados += 1;
+    if (event.tipo === 'finalizado') row.finalizados += 1;
+    if (event.tipo === 'reaberto') row.reabertos += 1;
+    if (event.tipo === 'informacoes_divergentes') row.divergentes += 1;
+    if (event.tipo === 'devolver_recusar') row.devolvidos += 1;
+    const duration = Number(event.duracaoStatusAnteriorMin);
+    if (Number.isFinite(duration) && duration >= 0) row.duracoes.push(duration);
+  }
+
+  async function countLegacyByDateField(field, applyTicket) {
     const q = query(
       collection(db, 'chamados'),
       where(field, '>=', startDate),
@@ -2091,38 +2365,61 @@ async function generateOperatorReport() {
   }
 
   try {
-    await countByDateField('tratamentoIniciadoEm', (ticket) => {
-      ensure(ticket.operadorTratamentoId, ticket.operadorTratamentoNome, ticket.operadorTratamentoEmail).iniciados += 1;
-    });
+    let usedEvents = false;
 
-    await countByDateField('finalizadoEm', (ticket) => {
-      ensure(ticket.finalizadoPor, ticket.finalizadoPorNome, ticket.finalizadoPorEmail).finalizados += 1;
-    });
+    try {
+      const eventsQuery = query(
+        collection(db, 'operador_eventos'),
+        where('criadoEm', '>=', startDate),
+        where('criadoEm', '<=', endDate),
+        limit(3000)
+      );
+      const eventsSnapshot = await getDocs(eventsQuery);
+      eventsSnapshot.docs.forEach((d) => addRowEvent({ id: d.id, ...d.data() }));
+      usedEvents = eventsSnapshot.size > 0;
+    } catch (eventError) {
+      console.warn('Relatório por eventos indisponível; usando campos atuais dos chamados:', eventError);
+    }
 
-    await countByDateField('reabertoEm', (ticket) => {
-      ensure(ticket.reabertoPor, ticket.reabertoPorNome, ticket.reabertoPorEmail).reabertos += 1;
-    });
+    if (!usedEvents) {
+      els.operatorReportBox.innerHTML = '<div class="empty-state">Sem eventos novos no período. Usando relatório legado pelos campos atuais dos chamados...</div>';
 
-    await countByDateField('informacoesDivergentesEm', (ticket) => {
-      ensure(
-        ticket.informacoesDivergentesPor,
-        ticket.informacoesDivergentesPorNome,
-        ticket.informacoesDivergentesPorEmail
-      ).divergentes += 1;
-    });
+      await countLegacyByDateField('tratamentoIniciadoEm', (ticket) => {
+        ensure(ticket.operadorTratamentoId, ticket.operadorTratamentoNome, ticket.operadorTratamentoEmail).iniciados += 1;
+      });
 
-    await countByDateField('devolverRecusarEm', (ticket) => {
-      ensure(
-        ticket.devolverRecusarPor,
-        ticket.devolverRecusarPorNome,
-        ticket.devolverRecusarPorEmail
-      ).devolvidos += 1;
-    });
+      await countLegacyByDateField('finalizadoEm', (ticket) => {
+        ensure(ticket.finalizadoPor, ticket.finalizadoPorNome, ticket.finalizadoPorEmail).finalizados += 1;
+      });
+
+      await countLegacyByDateField('reabertoEm', (ticket) => {
+        ensure(ticket.reabertoPor, ticket.reabertoPorNome, ticket.reabertoPorEmail).reabertos += 1;
+      });
+
+      await countLegacyByDateField('informacoesDivergentesEm', (ticket) => {
+        ensure(
+          ticket.informacoesDivergentesPor,
+          ticket.informacoesDivergentesPorNome,
+          ticket.informacoesDivergentesPorEmail
+        ).divergentes += 1;
+      });
+
+      await countLegacyByDateField('devolverRecusarEm', (ticket) => {
+        ensure(
+          ticket.devolverRecusarPor,
+          ticket.devolverRecusarPorNome,
+          ticket.devolverRecusarPorEmail
+        ).devolvidos += 1;
+      });
+    }
 
     const data = [...rows.values()]
       .map((row) => ({
         ...row,
-        total: row.iniciados + row.finalizados + row.reabertos + row.divergentes + row.devolvidos
+        total: row.iniciados + row.finalizados + row.reabertos + row.divergentes + row.devolvidos,
+        tempoMedio: row.duracoes.length
+          ? Math.round(row.duracoes.reduce((acc, value) => acc + value, 0) / row.duracoes.length)
+          : null
       }))
       .filter((row) => row.total > 0)
       .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'));
@@ -2133,6 +2430,7 @@ async function generateOperatorReport() {
     }
 
     els.operatorReportBox.innerHTML = `
+      <p class="muted">${usedEvents ? 'Relatório por eventos: conta cada vez que um operador pegou/tratou o chamado.' : 'Relatório legado: usa o estado atual gravado no chamado.'}</p>
       <div class="table-wrap">
         <table class="report-table">
           <thead>
@@ -2143,6 +2441,7 @@ async function generateOperatorReport() {
               <th>Reabertos</th>
               <th>Divergentes</th>
               <th>Devolver/recusar</th>
+              <th>Tempo médio até ação</th>
               <th>Total</th>
             </tr>
           </thead>
@@ -2155,6 +2454,7 @@ async function generateOperatorReport() {
                 <td>${row.reabertos}</td>
                 <td>${row.divergentes}</td>
                 <td>${row.devolvidos}</td>
+                <td>${escapeHtml(formatMinutes(row.tempoMedio))}</td>
                 <td><strong>${row.total}</strong></td>
               </tr>
             `).join('')}
@@ -2678,6 +2978,9 @@ els.adminBtn.addEventListener('click', () => {
 });
 els.orgForm.addEventListener('submit', createOrg);
 els.operatorReportBtn?.addEventListener('click', generateOperatorReport);
+els.adminQueryActiveBtn?.addEventListener('click', adminQueryActiveTickets);
+els.adminClearQueryBtn?.addEventListener('click', adminClearManualQuery);
+els.adminSlaQueryBtn?.addEventListener('click', generateAdminSlaReport);
 els.quickOrgForm?.addEventListener('submit', createOrg);
 els.searchInput.addEventListener('input', scheduleRemoteTicketSearch);
 els.ticketTypeFilter?.addEventListener('change', (event) => {

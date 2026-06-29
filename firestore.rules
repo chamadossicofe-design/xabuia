@@ -1,4 +1,5 @@
 rules_version = '2';
+// Xabuia firestore.rules v24 - admin consulta manual + eventos de operador
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -151,7 +152,14 @@ service cloud.firestore {
         'criadoPor',
         'criadoPorEmail',
         'criadoEm',
-        'atualizadoEm'
+        'atualizadoEm',
+        'solicitantesIds',
+        'ultimaOcorrenciaTexto',
+        'ultimaOcorrenciaTipo',
+        'ultimaOcorrenciaUsuarioId',
+        'ultimaOcorrenciaUsuarioNome',
+        'ultimaOcorrenciaUsuarioEmail',
+        'ultimaOcorrenciaEm'
       ];
     }
 
@@ -174,7 +182,18 @@ service cloud.firestore {
         'criadoPorNome',
         'criadoPorEmail',
         'criadoEm',
-        'atualizadoEm'
+        'atualizadoEm',
+
+        // Campos econômicos usados pelo Tampermonkey v23 e pelo app v21+:
+        // evitam ler subcoleção historico só para mostrar a última resposta
+        // e permitem monitorar somente os chamados do solicitante.
+        'solicitantesIds',
+        'ultimaOcorrenciaTexto',
+        'ultimaOcorrenciaTipo',
+        'ultimaOcorrenciaUsuarioId',
+        'ultimaOcorrenciaUsuarioNome',
+        'ultimaOcorrenciaUsuarioEmail',
+        'ultimaOcorrenciaEm'
       ];
     }
 
@@ -189,6 +208,12 @@ service cloud.firestore {
         && request.resource.data.organizacaoNome is string
         && request.resource.data.chave is string
         && request.resource.data.chaveBusca is string
+        && request.resource.data.solicitantesIds is list
+        && request.auth.uid in request.resource.data.solicitantesIds
+        && request.resource.data.ultimaOcorrenciaTexto is string
+        && request.resource.data.ultimaOcorrenciaTipo is string
+        && request.resource.data.ultimaOcorrenciaUsuarioId == request.auth.uid
+        && request.resource.data.ultimaOcorrenciaUsuarioEmail == request.auth.token.email
         && (
           isAdmin()
           || isOperator()
@@ -202,6 +227,28 @@ service cloud.firestore {
 
     function changedAny(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasAny(keys);
+    }
+
+    function validLastOccurrenceAudit() {
+      return !changedAny(['ultimaOcorrenciaUsuarioId'])
+        || (
+          request.resource.data.ultimaOcorrenciaUsuarioId == request.auth.uid
+          && request.resource.data.ultimaOcorrenciaUsuarioEmail == request.auth.token.email
+        );
+    }
+
+    function lastOccurrenceKeys() {
+      return [
+        'atualizadoEm',
+        'solicitantesIds',
+        'ultimaOcorrenciaTexto',
+        'ultimaOcorrenciaTipo',
+        'ultimaOcorrenciaUsuarioId',
+        'ultimaOcorrenciaUsuarioNome',
+        'ultimaOcorrenciaUsuarioEmail',
+        'ultimaOcorrenciaEm',
+        'anexo'
+      ];
     }
 
     function ticketMutableKeys() {
@@ -233,7 +280,15 @@ service cloud.firestore {
         'devolverRecusarPor',
         'devolverRecusarPorNome',
         'devolverRecusarPorEmail',
-        'devolverRecusarEm'
+        'devolverRecusarEm',
+
+        'solicitantesIds',
+        'ultimaOcorrenciaTexto',
+        'ultimaOcorrenciaTipo',
+        'ultimaOcorrenciaUsuarioId',
+        'ultimaOcorrenciaUsuarioNome',
+        'ultimaOcorrenciaUsuarioEmail',
+        'ultimaOcorrenciaEm'
       ];
     }
 
@@ -291,7 +346,8 @@ service cloud.firestore {
         && validFinalizedAudit()
         && validDivergentAudit()
         && validReturnRefuseAudit()
-        && validReopenAudit();
+        && validReopenAudit()
+        && validLastOccurrenceAudit();
     }
 
     function userReopenKeys() {
@@ -306,6 +362,13 @@ service cloud.firestore {
         'operadorTratamentoNome',
         'operadorTratamentoEmail',
         'tratamentoIniciadoEm',
+        'solicitantesIds',
+        'ultimaOcorrenciaTexto',
+        'ultimaOcorrenciaTipo',
+        'ultimaOcorrenciaUsuarioId',
+        'ultimaOcorrenciaUsuarioNome',
+        'ultimaOcorrenciaUsuarioEmail',
+        'ultimaOcorrenciaEm',
         'anexo'
       ];
     }
@@ -320,18 +383,20 @@ service cloud.firestore {
         && request.resource.data.operadorTratamentoId == null
         && request.resource.data.operadorTratamentoNome == null
         && request.resource.data.operadorTratamentoEmail == null
-        && request.resource.data.tratamentoIniciadoEm == null;
+        && request.resource.data.tratamentoIniciadoEm == null
+        && validLastOccurrenceAudit();
     }
 
-    function validUserAttachmentOnlyUpdate() {
+    function validUserOccurrenceUpdate() {
       return isUser()
         && sameOrg(resource.data.organizacaoId)
-        && changedOnly(['anexo', 'atualizadoEm']);
+        && changedOnly(lastOccurrenceKeys())
+        && validLastOccurrenceAudit();
     }
 
     function validUserTicketUpdate() {
       return validUserReopenUpdate()
-        || validUserAttachmentOnlyUpdate();
+        || validUserOccurrenceUpdate();
     }
 
     function validHistoryKeys() {
@@ -360,7 +425,7 @@ service cloud.firestore {
     function validUserHistory(ticketData) {
       return isUser()
         && sameOrg(ticketData.organizacaoId)
-        && request.resource.data.tipo in ['criacao', 'reabertura'];
+        && request.resource.data.tipo in ['criacao', 'reabertura', 'observacao'];
     }
 
     function validOperatorHistory(ticketData) {
@@ -376,6 +441,54 @@ service cloud.firestore {
           'anexo',
           'criacao'
         ];
+    }
+
+    function validOperatorEventTypes() {
+      return [
+        'em_tratamento',
+        'finalizado',
+        'reaberto',
+        'informacoes_divergentes',
+        'devolver_recusar'
+      ];
+    }
+
+    function operatorEventKeys() {
+      return [
+        'chamadoId',
+        'tipo',
+        'statusAnterior',
+        'statusNovo',
+        'operadorId',
+        'operadorNome',
+        'operadorEmail',
+        'organizacaoId',
+        'organizacaoNome',
+        'tipoChamado',
+        'chave',
+        'titulo',
+        'texto',
+        'duracaoStatusAnteriorMin',
+        'criadoEm'
+      ];
+    }
+
+    function validOperatorEventCreate() {
+      return isOperatorOrAdmin()
+        && request.resource.data.keys().hasOnly(operatorEventKeys())
+        && request.resource.data.chamadoId is string
+        && request.resource.data.tipo in validOperatorEventTypes()
+        && request.resource.data.statusAnterior is string
+        && request.resource.data.statusNovo in validStatuses()
+        && request.resource.data.operadorId == request.auth.uid
+        && request.resource.data.operadorEmail == request.auth.token.email
+        && request.resource.data.operadorNome is string
+        && request.resource.data.organizacaoId is string
+        && request.resource.data.organizacaoNome is string
+        && request.resource.data.tipoChamado is string
+        && request.resource.data.chave is string
+        && request.resource.data.titulo is string
+        && request.resource.data.texto is string;
     }
 
     match /usuarios/{uid} {
@@ -410,6 +523,12 @@ service cloud.firestore {
         && validOrgWrite();
 
       allow delete: if isAdmin();
+    }
+
+    match /operador_eventos/{eventId} {
+      allow get, list: if isAdmin();
+      allow create: if validOperatorEventCreate();
+      allow update, delete: if isAdmin();
     }
 
     match /chamados/{chamadoId} {

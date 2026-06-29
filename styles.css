@@ -948,3 +948,24 @@ button { cursor: pointer; }
     grid-template-columns: 1fr;
   }
 }
+/* V22 - Admin consulta manual + SLA */
+.sla-section {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+}
+.sla-filters {
+  grid-template-columns: repeat(3, minmax(150px, 1fr)) auto;
+}
+.sla-table td:nth-child(3) strong {
+  color: var(--danger);
+}
+.top-actions #adminQueryActiveBtn:not(.hidden) {
+  box-shadow: 0 8px 18px rgba(21, 94, 239, .18);
+}
+@media (max-width: 980px) {
+  .sla-filters {
+    grid-template-columns: 1fr;
+  }
+}
