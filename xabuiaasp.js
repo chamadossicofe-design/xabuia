@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.1.0
+// @version      3.1.1
 // @description  Abre/atualiza chamados Xabuia direto do card do Infradesk. Não monitora desconhecidos; só acompanha chamados abertos pelo usuário e ativos na tela.
 // @author       Xabuia
 // @match        https://asp.infradesk.app/backend/chamados/painel*
@@ -11,7 +11,9 @@
 // @homepageURL  https://chamadossicofe-design.github.io/xabuia/
 // @updateURL    https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js
 // @downloadURL  https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js
-// @grant        none
+// @grant        GM_info
+// @grant        GM_xmlhttpRequest
+// @connect      chamadossicofe-design.github.io
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js
@@ -23,8 +25,11 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = '23.0.0-manual-so-abertos-visiveis';
+  const XABUIA_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.1.1';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
+  const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
+  const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
+  const XABUIA_UPDATE_CACHE_KEY = 'xabuia_force_update_cache_v1';
   const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
   const XABUIA_CACHE_KEY = 'xabuia_tm_cache_v23_manual';
   const XABUIA_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
@@ -41,6 +46,199 @@
     messagingSenderId: '81395419196',
     appId: '1:81395419196:web:8322d61652f6240b49db39'
   };
+
+  /********************************************************************
+   * TRAVA DE ATUALIZAÇÃO OBRIGATÓRIA
+   * Lê o MESMO xabuiaasp.js publicado no GitHub Pages.
+   * Se existir @version maior, bloqueia o uso até atualizar.
+   ********************************************************************/
+  const versionGateState = {
+    blocked: false,
+    latestVersion: '',
+    checking: null
+  };
+
+  function readUpdateCache() {
+    try { return JSON.parse(localStorage.getItem(XABUIA_UPDATE_CACHE_KEY) || '{}') || {}; } catch (_) { return {}; }
+  }
+
+  function writeUpdateCache(data) {
+    try { localStorage.setItem(XABUIA_UPDATE_CACHE_KEY, JSON.stringify(data || {})); } catch (_) {}
+  }
+
+  function extractMetaVersion(scriptText) {
+    const match = String(scriptText || '').match(/\/\/\s*@version\s+([^\s]+)/i);
+    return match ? match[1].trim() : '';
+  }
+
+  function compareVersions(installed, latest) {
+    const a = String(installed || '0').match(/\d+/g)?.map(Number) || [0];
+    const b = String(latest || '0').match(/\d+/g)?.map(Number) || [0];
+    const len = Math.max(a.length, b.length);
+    for (let i = 0; i < len; i += 1) {
+      const left = a[i] || 0;
+      const right = b[i] || 0;
+      if (left > right) return 1;
+      if (left < right) return -1;
+    }
+    return 0;
+  }
+
+  function cacheBustUrl(url) {
+    return `${url}${String(url).includes('?') ? '&' : '?'}xabuia_update_check=${Date.now()}`;
+  }
+
+  function getRemoteScriptText(url) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        reject(new Error('GM_xmlhttpRequest indisponível. Atualize/reinstale o script Xabuia.'));
+        return;
+      }
+
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: cacheBustUrl(url),
+        nocache: true,
+        revalidate: true,
+        timeout: 15000,
+        headers: {
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache'
+        },
+        onload(response) {
+          if (response.status >= 200 && response.status < 300 && response.responseText) {
+            resolve(response.responseText);
+          } else {
+            reject(new Error(`Não consegui consultar a versão publicada. HTTP ${response.status}`));
+          }
+        },
+        onerror() { reject(new Error('Falha de rede ao consultar a versão publicada.')); },
+        ontimeout() { reject(new Error('Tempo esgotado ao consultar a versão publicada.')); }
+      });
+    });
+  }
+
+  function xabuiaIsUpdateBlocked() {
+    const cache = readUpdateCache();
+    const latest = versionGateState.latestVersion || cache.latestVersion || '';
+    if (latest && compareVersions(XABUIA_VERSION, latest) < 0) {
+      versionGateState.blocked = true;
+      versionGateState.latestVersion = latest;
+      return true;
+    }
+    return versionGateState.blocked;
+  }
+
+  function removeXabuiaUiForUpdateBlock() {
+    document.querySelectorAll('.xabuia-card-btn,.xabuia-box').forEach((el) => el.remove());
+    const modal = document.getElementById('xabuia-overlay');
+    if (modal) modal.classList.remove('open');
+  }
+
+  function showXabuiaUpdateBlock(latestVersion = '') {
+    versionGateState.blocked = true;
+    if (latestVersion) versionGateState.latestVersion = latestVersion;
+    removeXabuiaUiForUpdateBlock();
+
+    let overlay = document.getElementById('xabuia-force-update-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'xabuia-force-update-overlay';
+      overlay.innerHTML = `
+        <div class="xabuia-force-update-card">
+          <img src="${XABUIA_ICON_URL}" alt="Xabuia">
+          <h2>Atualização obrigatória do Xabuia</h2>
+          <p>Existe uma versão nova publicada. Para evitar erro e manter todos no mesmo padrão, esta versão instalada foi bloqueada.</p>
+          <div class="xabuia-force-update-versions">
+            <span>Instalada: <strong id="xabuia-installed-version"></strong></span>
+            <span>Publicada: <strong id="xabuia-latest-version"></strong></span>
+          </div>
+          <button id="xabuia-update-now" type="button">Atualizar agora</button>
+          <button id="xabuia-reload-after-update" type="button">Já atualizei, recarregar página</button>
+          <small>Depois de instalar/atualizar no Tampermonkey, recarregue esta página do Infradesk.</small>
+        </div>
+      `;
+
+      const style = document.createElement('style');
+      style.id = 'xabuia-force-update-style';
+      style.textContent = `
+        #xabuia-force-update-overlay{position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,.78);display:flex;align-items:center;justify-content:center;padding:20px;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+        .xabuia-force-update-card{width:min(480px,calc(100vw - 32px));background:#fff;border-radius:22px;box-shadow:0 28px 80px rgba(0,0,0,.34);padding:24px;text-align:center;color:#172033}
+        .xabuia-force-update-card img{width:62px;height:62px;border-radius:16px;margin-bottom:10px}
+        .xabuia-force-update-card h2{font-size:22px;margin:6px 0 8px;color:#111827}
+        .xabuia-force-update-card p{font-size:14px;line-height:1.45;color:#475569;margin:0 0 14px}
+        .xabuia-force-update-versions{display:grid;gap:6px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin:12px 0 16px;text-align:left;font-size:13px}
+        .xabuia-force-update-card button{width:100%;border:0;border-radius:14px;min-height:44px;padding:10px 14px;font-weight:900;cursor:pointer;margin-top:8px}
+        #xabuia-update-now{background:#155eef;color:#fff}
+        #xabuia-reload-after-update{background:#f8fafc;color:#172033;border:1px solid #dfe7f0}
+        .xabuia-force-update-card small{display:block;color:#64748b;margin-top:12px;font-size:12px}
+      `;
+      document.head.appendChild(style);
+      document.body.appendChild(overlay);
+
+      document.getElementById('xabuia-update-now')?.addEventListener('click', () => {
+        window.open(cacheBustUrl(XABUIA_UPDATE_URL), '_blank', 'noopener,noreferrer');
+      });
+
+      document.getElementById('xabuia-reload-after-update')?.addEventListener('click', () => {
+        window.location.reload();
+      });
+    }
+
+    const installedEl = document.getElementById('xabuia-installed-version');
+    const latestEl = document.getElementById('xabuia-latest-version');
+    if (installedEl) installedEl.textContent = XABUIA_VERSION || 'desconhecida';
+    if (latestEl) latestEl.textContent = versionGateState.latestVersion || latestVersion || 'consultando...';
+  }
+
+  function clearXabuiaUpdateBlockIfCurrent() {
+    const cache = readUpdateCache();
+    const latest = versionGateState.latestVersion || cache.latestVersion || '';
+    if (!latest || compareVersions(XABUIA_VERSION, latest) >= 0) {
+      versionGateState.blocked = false;
+      document.getElementById('xabuia-force-update-overlay')?.remove();
+    }
+  }
+
+  async function checkXabuiaLatestVersion(force = false) {
+    const cache = readUpdateCache();
+    const now = Date.now();
+
+    if (!force && cache.lastCheckAt && now - Number(cache.lastCheckAt) < XABUIA_VERSION_CHECK_EVERY_MS) {
+      if (xabuiaIsUpdateBlocked()) showXabuiaUpdateBlock(cache.latestVersion || '');
+      return cache.latestVersion || '';
+    }
+
+    if (versionGateState.checking) return versionGateState.checking;
+
+    versionGateState.checking = (async () => {
+      try {
+        const remoteText = await getRemoteScriptText(XABUIA_UPDATE_URL);
+        const latestVersion = extractMetaVersion(remoteText);
+
+        if (!latestVersion) throw new Error('Não encontrei @version no arquivo publicado.');
+
+        writeUpdateCache({ lastCheckAt: now, latestVersion });
+        versionGateState.latestVersion = latestVersion;
+
+        if (compareVersions(XABUIA_VERSION, latestVersion) < 0) {
+          showXabuiaUpdateBlock(latestVersion);
+          return latestVersion;
+        }
+
+        clearXabuiaUpdateBlockIfCurrent();
+        return latestVersion;
+      } catch (error) {
+        console.warn('[Xabuia] Verificação de atualização falhou:', error);
+        if (xabuiaIsUpdateBlocked()) showXabuiaUpdateBlock(versionGateState.latestVersion || cache.latestVersion || '');
+        return cache.latestVersion || '';
+      } finally {
+        versionGateState.checking = null;
+      }
+    })();
+
+    return versionGateState.checking;
+  }
 
   const TIPO_CHAMADO = 'nf_caminhao_porta';
   const TIPO_CHAMADO_NOME = 'NF • Caminhão na porta';
@@ -466,6 +664,10 @@
    * CARD DO INFRADESK
    ********************************************************************/
   function scanCards() {
+    if (xabuiaIsUpdateBlocked()) {
+      showXabuiaUpdateBlock(versionGateState.latestVersion || readUpdateCache()?.latestVersion || '');
+      return;
+    }
     injectStyles();
     ensureModal();
     const cards = $$('.chamado-item[data-chamado-id]');
@@ -541,6 +743,7 @@
    * MODAL E SALVAMENTO
    ********************************************************************/
   async function openModal(card) {
+    if (xabuiaIsUpdateBlocked()) { showXabuiaUpdateBlock(versionGateState.latestVersion || readUpdateCache()?.latestVersion || ''); return; }
     if (!isTargetCard(card)) { showToast('O Xabuia está habilitado apenas na coluna Em Análise Terceiro.', 'error'); return; }
     state.activeCard = card;
     state.activeData = parseCard(card);
@@ -630,6 +833,7 @@
   }
 
   async function saveActiveTicket() {
+    if (xabuiaIsUpdateBlocked()) { showXabuiaUpdateBlock(versionGateState.latestVersion || readUpdateCache()?.latestVersion || ''); return; }
     if (state.isSaving) return;
     const data = state.activeData;
     const card = state.activeCard;
@@ -709,12 +913,18 @@
   });
 
   function boot() {
+    if (xabuiaIsUpdateBlocked()) {
+      showXabuiaUpdateBlock(versionGateState.latestVersion || readUpdateCache()?.latestVersion || '');
+      checkXabuiaLatestVersion(true);
+      return;
+    }
+    checkXabuiaLatestVersion(false);
     injectStyles();
     ensureModal();
     scanCards();
     observer.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener('focus', scanCards);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) scanCards(); });
+    window.addEventListener('focus', () => { checkXabuiaLatestVersion(false); scanCards(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkXabuiaLatestVersion(false); scanCards(); } });
     console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Modo manual: zero monitoramento de cards desconhecidos; só chamados ativos já abertos.`);
   }
 
