@@ -1704,7 +1704,15 @@ async function addHistory(ticket) {
     };
 
     await updateDoc(doc(db, 'chamados', ticketId), updatePayload);
-    await addHistoryDoc(ticketId, textoFinal, historyType, anexo ? { anexo } : {});
+
+    let secondaryWarning = '';
+    try {
+      await addHistoryDoc(ticketId, textoFinal, historyType, anexo ? { anexo } : {});
+    } catch (historyError) {
+      console.warn('Chamado salvo, mas o histórico detalhado não foi gravado:', historyError);
+      secondaryWarning = 'Chamado salvo, mas o histórico detalhado não foi gravado. Confira se o firestore.rules novo foi publicado.';
+    }
+
     if (statusChanged && typeof ticket === 'object') {
       await addOperatorEvent(ticket, selectedStatus, textoFinal);
     }
@@ -1712,10 +1720,17 @@ async function addHistory(ticket) {
     textarea.value = '';
     clearHistoryAttachment();
     state.historyLoadedFor = null;
-    await loadHistory(ticketId);
-    state.historyLoadedFor = ticketId;
+    try {
+      await loadHistory(ticketId);
+      state.historyLoadedFor = ticketId;
+    } catch (historyLoadError) {
+      console.warn('Chamado salvo, mas não foi possível recarregar o histórico:', historyLoadError);
+      if (!secondaryWarning) secondaryWarning = 'Chamado salvo, mas não consegui recarregar o histórico. Confira as regras do Firestore.';
+    }
 
-    if (statusChanged) {
+    if (secondaryWarning) {
+      showToast(secondaryWarning, 'error');
+    } else if (statusChanged) {
       showToast(warning || `Status e ocorrência salvos: ${STATUS_LABELS[selectedStatus]}.`, warning ? 'error' : 'success');
     } else {
       showToast(warning || 'Ocorrência adicionada.', warning ? 'error' : 'success');

@@ -298,7 +298,14 @@ service cloud.firestore {
     }
 
     function validTreatmentAudit() {
-      return request.resource.data.status != 'em_tratamento'
+      return !changedAny([
+          'status',
+          'operadorTratamentoId',
+          'operadorTratamentoNome',
+          'operadorTratamentoEmail',
+          'tratamentoIniciadoEm'
+        ])
+        || request.resource.data.status != 'em_tratamento'
         || (
           request.resource.data.operadorTratamentoId == request.auth.uid
           && request.resource.data.operadorTratamentoEmail == request.auth.token.email
@@ -306,7 +313,14 @@ service cloud.firestore {
     }
 
     function validFinalizedAudit() {
-      return request.resource.data.status != 'finalizado'
+      return !changedAny([
+          'status',
+          'finalizadoPor',
+          'finalizadoPorNome',
+          'finalizadoPorEmail',
+          'finalizadoEm'
+        ])
+        || request.resource.data.status != 'finalizado'
         || (
           request.resource.data.finalizadoPor == request.auth.uid
           && request.resource.data.finalizadoPorEmail == request.auth.token.email
@@ -314,7 +328,14 @@ service cloud.firestore {
     }
 
     function validDivergentAudit() {
-      return request.resource.data.status != 'informacoes_divergentes'
+      return !changedAny([
+          'status',
+          'informacoesDivergentesPor',
+          'informacoesDivergentesPorNome',
+          'informacoesDivergentesPorEmail',
+          'informacoesDivergentesEm'
+        ])
+        || request.resource.data.status != 'informacoes_divergentes'
         || (
           request.resource.data.informacoesDivergentesPor == request.auth.uid
           && request.resource.data.informacoesDivergentesPorEmail == request.auth.token.email
@@ -322,7 +343,14 @@ service cloud.firestore {
     }
 
     function validReturnRefuseAudit() {
-      return request.resource.data.status != 'devolver_recusar'
+      return !changedAny([
+          'status',
+          'devolverRecusarPor',
+          'devolverRecusarPorNome',
+          'devolverRecusarPorEmail',
+          'devolverRecusarEm'
+        ])
+        || request.resource.data.status != 'devolver_recusar'
         || (
           request.resource.data.devolverRecusarPor == request.auth.uid
           && request.resource.data.devolverRecusarPorEmail == request.auth.token.email
@@ -330,7 +358,14 @@ service cloud.firestore {
     }
 
     function validReopenAudit() {
-      return request.resource.data.status != 'reaberto'
+      return !changedAny([
+          'status',
+          'reabertoPor',
+          'reabertoPorNome',
+          'reabertoPorEmail',
+          'reabertoEm'
+        ])
+        || request.resource.data.status != 'reaberto'
         || (
           request.resource.data.reabertoPor == request.auth.uid
           && request.resource.data.reabertoPorEmail == request.auth.token.email

@@ -21,3 +21,8 @@ O que mudou:
 
 Observação:
 - O arquivo xabuia.png não está dentro deste ZIP porque não foi enviado aqui. Mantenha o xabuia.png que já existe no seu GitHub Pages.
+
+
+V22.1:
+- Ajuste nas regras para Admin/Operador adicionar ocorrência em chamados já reservados/finalizados por outro usuário sem quebrar auditoria.
+- Ajuste no app para não mostrar 'Erro ao salvar ocorrência' quando o chamado principal salvou, mas histórico/relatório secundário falhou por regra antiga.
