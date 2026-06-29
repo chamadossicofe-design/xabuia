@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.2
+// @version      3.2.3
 // @description  Abre/atualiza chamados Xabuia direto do card do Infradesk. Não monitora desconhecidos; só acompanha chamados abertos pelo usuário e ativos na tela.
 // @author       Xabuia
 // @match        https://asp.infradesk.app/backend/chamados/painel*
@@ -25,7 +25,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.2.2';
+  const XABUIA_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.2.3';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
   const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
@@ -86,6 +86,10 @@
 
   function cacheBustUrl(url) {
     return `${url}${String(url).includes('?') ? '&' : '?'}xabuia_update_check=${Date.now()}`;
+  }
+
+  function tampermonkeyInstallUrl(url) {
+    return `https://www.tampermonkey.net/script_installation.php#url=${encodeURIComponent(cacheBustUrl(url))}`;
   }
 
   function getRemoteScriptText(url) {
@@ -155,7 +159,7 @@
           </div>
           <button id="xabuia-update-now" type="button">Atualizar agora</button>
           <button id="xabuia-reload-after-update" type="button">Já atualizei, recarregar página</button>
-          <small>Depois de instalar/atualizar no Tampermonkey, recarregue esta página do Infradesk.</small>
+          <small>Na tela do Tampermonkey, clique em Atualizar/Instalar. Depois recarregue esta página do Infradesk.</small>
         </div>
       `;
 
@@ -177,7 +181,7 @@
       document.body.appendChild(overlay);
 
       document.getElementById('xabuia-update-now')?.addEventListener('click', () => {
-        window.open(cacheBustUrl(XABUIA_UPDATE_URL), '_blank', 'noopener,noreferrer');
+        window.open(tampermonkeyInstallUrl(XABUIA_UPDATE_URL), '_blank', 'noopener,noreferrer');
       });
 
       document.getElementById('xabuia-reload-after-update')?.addEventListener('click', () => {
