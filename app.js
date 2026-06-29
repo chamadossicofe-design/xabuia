@@ -21,6 +21,7 @@ import {
   getDoc,
   getDocs,
   updateDoc,
+  writeBatch,
   serverTimestamp,
   arrayUnion,
   query,
@@ -45,7 +46,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V22-admin-consulta-sla';
+const APP_VERSION = 'V27-historico-completo';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -93,6 +94,8 @@ const LIVE_OPEN_LIMIT = 250;
 const LIVE_TREATMENT_LIMIT = 250;
 const ADMIN_ACTIVE_QUERY_LIMIT_PER_STATUS = 200;
 const ADMIN_SLA_SETTINGS_KEY = 'xabuia_admin_sla_v1';
+const COUNTED_STATUS_VALUES = ['aberto', 'reaberto', 'em_tratamento'];
+const HISTORY_LIMIT = 300;
 
 const HISTORY_TYPE_LABELS = {
   criacao: 'Criação',
@@ -107,7 +110,9 @@ const HISTORY_TYPE_LABELS = {
   status: 'Status',
   reabertura: 'Reabertura',
   informacoes_divergentes: 'Informações divergentes',
-  devolver_recusar: 'Devolver e recusar'
+  devolver_recusar: 'Devolver e recusar',
+  finalizado: 'Finalizado',
+  em_tratamento: 'Em tratamento'
 };
 
 const app = initializeApp(firebaseConfig);
@@ -750,16 +755,21 @@ function createTicketBasePayload({ tipoChamado, chave, chaveBusca, org, codigoPr
   };
 }
 
-async function addHistoryDoc(ticketId, texto, tipo = 'observacao', extra = {}) {
-  await addDoc(collection(db, 'chamados', ticketId, 'historico'), {
-    texto,
-    tipo,
+
+function historyPayload(texto, tipo = 'observacao', extra = {}) {
+  return {
+    texto: normalizeKey(texto || ''),
+    tipo: tipo || 'observacao',
     usuarioId: state.user.uid,
     usuarioNome: selectedUserName(),
-    usuarioEmail: state.user.email,
+    usuarioEmail: state.user.email || '',
     criadoEm: serverTimestamp(),
     ...extra
-  });
+  };
+}
+
+async function addHistoryDoc(ticketId, texto, tipo = 'observacao', extra = {}) {
+  await addDoc(collection(db, 'chamados', ticketId, 'historico'), historyPayload(texto, tipo, extra));
 }
 
 function eventTypeForStatus(status) {
@@ -771,31 +781,154 @@ function eventTypeForStatus(status) {
   return 'status';
 }
 
-async function addOperatorEvent(ticket, statusNovo, texto = '') {
-  if (!ticket?.id || !isOperatorOrAdmin() || !state.user?.uid) return;
+function isCountedStatus(status) {
+  return COUNTED_STATUS_VALUES.includes(String(status || ''));
+}
+
+function statusStartValue(ticket, status = ticket?.status) {
+  if (!ticket) return null;
+  if (status === 'reaberto') return ticket.reabertoEm || ticket.atualizadoEm || ticket.criadoEm || null;
+  if (status === 'em_tratamento') return ticket.tratamentoIniciadoEm || ticket.atualizadoEm || ticket.criadoEm || null;
+  if (status === 'aberto') return ticket.criadoEm || ticket.atualizadoEm || null;
+  return ticket.atualizadoEm || ticket.criadoEm || null;
+}
+
+function timelineTicketBase(ticket, ticketRef = null) {
+  return {
+    chamadoId: ticketRef?.id || ticket?.id || '',
+    organizacaoId: ticket?.organizacaoId || '',
+    organizacaoNome: ticket?.organizacaoNome || '',
+    tipoChamado: ticket?.tipoChamado || 'nota_fiscal',
+    chave: ticket?.chave || ticket?.codigoProduto || ''
+  };
+}
+
+function statusEventPayload(ticket, ticketRef, options = {}) {
+  const base = timelineTicketBase(ticket, ticketRef);
+  return {
+    ...base,
+    tipoEvento: options.tipoEvento || 'mudanca_status',
+    status: options.status || options.statusNovo || ticket?.status || 'aberto',
+    statusAnterior: options.statusAnterior || '',
+    statusNovo: options.statusNovo || options.status || '',
+    contabilizaTempo: Boolean(options.contabilizaTempo),
+    inicioEm: options.inicioEm ?? null,
+    fimEm: options.fimEm ?? null,
+    duracaoMin: Number.isFinite(Number(options.duracaoMin)) ? Number(options.duracaoMin) : null,
+    usuarioId: state.user.uid,
+    usuarioNome: selectedUserName(),
+    usuarioEmail: state.user.email || '',
+    texto: normalizeKey(options.texto || ''),
+    criadoEm: serverTimestamp()
+  };
+}
+
+function queueStatusTimelineEvents(batch, ticketRef, previousTicket, statusNovo, texto = '', newTicketData = null) {
+  if (!batch || !ticketRef || !state.user?.uid) return;
+
+  const statusAnterior = previousTicket?.status || '';
+  const effectiveTicket = previousTicket || { id: ticketRef.id, ...(newTicketData || {}), status: statusNovo };
+  const eventsRef = collection(db, 'chamados', ticketRef.id, 'status_eventos');
+
+  if (!previousTicket) {
+    const entradaStatus = statusNovo || 'aberto';
+    batch.set(doc(eventsRef), statusEventPayload(effectiveTicket, ticketRef, {
+      tipoEvento: 'entrada_status',
+      status: entradaStatus,
+      statusAnterior: '',
+      statusNovo: entradaStatus,
+      contabilizaTempo: isCountedStatus(entradaStatus),
+      inicioEm: serverTimestamp(),
+      fimEm: null,
+      duracaoMin: null,
+      texto
+    }));
+    return;
+  }
+
+  if (!statusNovo || statusNovo === statusAnterior) return;
+
+  if (isCountedStatus(statusAnterior)) {
+    batch.set(doc(eventsRef), statusEventPayload(previousTicket, ticketRef, {
+      tipoEvento: 'saida_status',
+      status: statusAnterior,
+      statusAnterior,
+      statusNovo,
+      contabilizaTempo: true,
+      inicioEm: statusStartValue(previousTicket, statusAnterior),
+      fimEm: serverTimestamp(),
+      duracaoMin: ticketAgeMinutes(previousTicket),
+      texto
+    }));
+  }
+
+  if (isCountedStatus(statusNovo)) {
+    const nextTicket = { ...previousTicket, ...(newTicketData || {}), status: statusNovo };
+    batch.set(doc(eventsRef), statusEventPayload(nextTicket, ticketRef, {
+      tipoEvento: 'entrada_status',
+      status: statusNovo,
+      statusAnterior,
+      statusNovo,
+      contabilizaTempo: true,
+      inicioEm: serverTimestamp(),
+      fimEm: null,
+      duracaoMin: null,
+      texto
+    }));
+  } else {
+    const nextTicket = { ...previousTicket, ...(newTicketData || {}), status: statusNovo };
+    batch.set(doc(eventsRef), statusEventPayload(nextTicket, ticketRef, {
+      tipoEvento: 'mudanca_status',
+      status: statusNovo,
+      statusAnterior,
+      statusNovo,
+      contabilizaTempo: false,
+      inicioEm: null,
+      fimEm: serverTimestamp(),
+      duracaoMin: null,
+      texto
+    }));
+  }
+}
+
+function operatorEventPayload(ticket, statusNovo, texto = '') {
+  if (!ticket?.id || !isOperatorOrAdmin() || !state.user?.uid) return null;
 
   const statusAnterior = ticket.status || 'aberto';
   const tipo = eventTypeForStatus(statusNovo);
-  if (tipo === 'status') return;
+  if (tipo === 'status') return null;
+
+  return {
+    chamadoId: ticket.id,
+    tipo,
+    statusAnterior,
+    statusNovo,
+    operadorId: state.user.uid,
+    operadorNome: selectedUserName(),
+    operadorEmail: state.user.email || '',
+    organizacaoId: ticket.organizacaoId || '',
+    organizacaoNome: ticket.organizacaoNome || '',
+    tipoChamado: ticket.tipoChamado || 'nota_fiscal',
+    chave: ticket.chave || ticket.codigoProduto || '',
+    titulo: ticketTitle(ticket),
+    texto: normalizeKey(texto || ''),
+    duracaoStatusAnteriorMin: isCountedStatus(statusAnterior) ? ticketAgeMinutes(ticket) : null,
+    criadoEm: serverTimestamp()
+  };
+}
+
+function queueOperatorEvent(batch, ticket, statusNovo, texto = '') {
+  const payload = operatorEventPayload(ticket, statusNovo, texto);
+  if (!payload) return;
+  batch.set(doc(collection(db, 'operador_eventos')), payload);
+}
+
+async function addOperatorEvent(ticket, statusNovo, texto = '') {
+  const payload = operatorEventPayload(ticket, statusNovo, texto);
+  if (!payload) return;
 
   try {
-    await addDoc(collection(db, 'operador_eventos'), {
-      chamadoId: ticket.id,
-      tipo,
-      statusAnterior,
-      statusNovo,
-      operadorId: state.user.uid,
-      operadorNome: selectedUserName(),
-      operadorEmail: state.user.email || '',
-      organizacaoId: ticket.organizacaoId || '',
-      organizacaoNome: ticket.organizacaoNome || '',
-      tipoChamado: ticket.tipoChamado || 'nota_fiscal',
-      chave: ticket.chave || ticket.codigoProduto || '',
-      titulo: ticketTitle(ticket),
-      texto: normalizeKey(texto || ''),
-      duracaoStatusAnteriorMin: ticketAgeMinutes(ticket),
-      criadoEm: serverTimestamp()
-    });
+    await addDoc(collection(db, 'operador_eventos'), payload);
   } catch (error) {
     console.warn('Evento do operador não foi gravado. O chamado continuou salvo:', error);
   }
@@ -1605,6 +1738,9 @@ async function renderTicketDetail(ticket) {
       </div>
     </div>
 
+    <h3>Linha do tempo de status</h3>
+    <div id="statusTimelineList" class="history"><div class="empty-state">Carregando linha do tempo...</div></div>
+
     <h3>Histórico</h3>
     <div id="historyList" class="history"><div class="empty-state">Carregando histórico...</div></div>
   `;
@@ -1621,8 +1757,53 @@ async function renderTicketDetail(ticket) {
   setupHistoryPasteZone();
   $('addHistoryBtn').addEventListener('click', () => addHistory(ticket));
   if (state.historyLoadedFor !== ticket.id) {
-    await loadHistory(ticket.id);
+    await Promise.all([loadHistory(ticket.id), loadStatusTimeline(ticket.id)]);
     state.historyLoadedFor = ticket.id;
+  }
+}
+
+function timelineEventLabel(item) {
+  const status = STATUS_LABELS[item.status] || item.status || 'Status';
+  const anterior = STATUS_LABELS[item.statusAnterior] || item.statusAnterior || '';
+  const novo = STATUS_LABELS[item.statusNovo] || item.statusNovo || '';
+
+  if (item.tipoEvento === 'entrada_status') return `Entrou em ${status}`;
+  if (item.tipoEvento === 'saida_status') return `Saiu de ${status}`;
+  if (anterior && novo) return `Mudou de ${anterior} para ${novo}`;
+  return `Status: ${status}`;
+}
+
+async function loadStatusTimeline(ticketId) {
+  const timelineList = $('statusTimelineList');
+  if (!timelineList) return;
+
+  try {
+    const q = query(collection(db, 'chamados', ticketId, 'status_eventos'), orderBy('criadoEm', 'asc'), limit(HISTORY_LIMIT));
+    const snapshot = await getDocs(q);
+    const items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    if (!items.length) {
+      timelineList.innerHTML = '<div class="empty-state">Ainda não há linha do tempo gravada para este chamado. Eventos novos aparecerão daqui em diante.</div>';
+      return;
+    }
+
+    timelineList.innerHTML = items.map((item) => `
+      <div class="history-item">
+        <div class="history-item-head">
+          <strong>${escapeHtml(item.usuarioNome || item.usuarioEmail || 'Sistema')}</strong>
+          ${statusBadge(item.status)}
+        </div>
+        <div class="history-text">
+          <strong>${escapeHtml(timelineEventLabel(item))}</strong>
+          ${item.contabilizaTempo && item.duracaoMin != null ? `<br><small>Tempo no status: ${escapeHtml(formatMinutes(Number(item.duracaoMin)))}</small>` : ''}
+          ${item.texto ? `<br>${escapeHtml(item.texto)}` : ''}
+        </div>
+        <small>${formatDate(item.criadoEm)}</small>
+      </div>
+    `).join('');
+  } catch (error) {
+    console.warn('Não foi possível carregar status_eventos:', error);
+    timelineList.innerHTML = '<div class="empty-state">Não consegui carregar a linha do tempo de status. Confira se o firestore.rules V27 foi publicado.</div>';
   }
 }
 
@@ -1631,7 +1812,7 @@ async function loadHistory(ticketId) {
   const historyList = $('historyList');
   if (!historyList) return;
 
-  const q = query(collection(db, 'chamados', ticketId, 'historico'), orderBy('criadoEm', 'asc'), limit(80));
+  const q = query(collection(db, 'chamados', ticketId, 'historico'), orderBy('criadoEm', 'asc'), limit(HISTORY_LIMIT));
   const snapshot = await getDocs(q);
   const items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
 
@@ -1656,6 +1837,7 @@ async function loadHistory(ticketId) {
 function historyTypeForStatusChange(status) {
   if (status === 'em_tratamento') return 'tratativa';
   if (status === 'reaberto') return 'reabertura';
+  if (status === 'finalizado') return 'finalizado';
   if (status === 'informacoes_divergentes') return 'informacoes_divergentes';
   if (status === 'devolver_recusar') return 'devolver_recusar';
   return 'status';
@@ -1693,6 +1875,7 @@ async function addHistory(ticket) {
   }
 
   try {
+    const ticketRef = doc(db, 'chamados', ticketId);
     const { anexo, warning } = await tryUploadTicketFile(ticketId, file);
     const textoFinal = texto || `Anexo enviado: ${file?.name || 'imagem-colada.png'}`;
     const historyType = statusChanged ? historyTypeForStatusChange(selectedStatus) : 'observacao';
@@ -1703,40 +1886,34 @@ async function addHistory(ticket) {
       ...(anexo ? { anexo } : {})
     };
 
-    await updateDoc(doc(db, 'chamados', ticketId), updatePayload);
-
-    let secondaryWarning = '';
-    try {
-      await addHistoryDoc(ticketId, textoFinal, historyType, anexo ? { anexo } : {});
-    } catch (historyError) {
-      console.warn('Chamado salvo, mas o histórico detalhado não foi gravado:', historyError);
-      secondaryWarning = 'Chamado salvo, mas o histórico detalhado não foi gravado. Confira se o firestore.rules novo foi publicado.';
-    }
+    const batch = writeBatch(db);
+    batch.update(ticketRef, updatePayload);
+    batch.set(doc(collection(db, 'chamados', ticketId, 'historico')), historyPayload(textoFinal, historyType, anexo ? { anexo } : {}));
 
     if (statusChanged && typeof ticket === 'object') {
-      await addOperatorEvent(ticket, selectedStatus, textoFinal);
+      queueStatusTimelineEvents(batch, ticketRef, ticket, selectedStatus, textoFinal, updatePayload);
+      queueOperatorEvent(batch, ticket, selectedStatus, textoFinal);
     }
+
+    await batch.commit();
 
     textarea.value = '';
     clearHistoryAttachment();
     state.historyLoadedFor = null;
-    try {
-      await loadHistory(ticketId);
-      state.historyLoadedFor = ticketId;
-    } catch (historyLoadError) {
-      console.warn('Chamado salvo, mas não foi possível recarregar o histórico:', historyLoadError);
-      if (!secondaryWarning) secondaryWarning = 'Chamado salvo, mas não consegui recarregar o histórico. Confira as regras do Firestore.';
-    }
+    await Promise.all([loadHistory(ticketId), loadStatusTimeline(ticketId)]);
+    state.historyLoadedFor = ticketId;
 
-    if (secondaryWarning) {
-      showToast(secondaryWarning, 'error');
-    } else if (statusChanged) {
+    if (statusChanged) {
       showToast(warning || `Status e ocorrência salvos: ${STATUS_LABELS[selectedStatus]}.`, warning ? 'error' : 'success');
     } else {
       showToast(warning || 'Ocorrência adicionada.', warning ? 'error' : 'success');
     }
   } catch (error) {
-    showToast(`Erro ao salvar ocorrência: ${error.message}`, 'error');
+    console.error('Erro ao salvar ocorrência completa:', error);
+    const message = error?.code === 'permission-denied'
+      ? 'Permissão negada pelo Firestore. Publique o firestore.rules V27 e recarregue com Ctrl + F5.'
+      : error.message;
+    showToast(`Erro ao salvar ocorrência: ${message}`, 'error');
   } finally {
     if (addButton) {
       addButton.disabled = false;
@@ -1837,27 +2014,43 @@ function ticketStatusPayload(status) {
 }
 
 async function reopenTicket(ticket, texto = 'Chamado reaberto.') {
-  await updateDoc(doc(db, 'chamados', ticket.id), {
+  const ticketRef = doc(db, 'chamados', ticket.id);
+  const updatePayload = {
     ...ticketStatusPayload('reaberto'),
     ...lastOccurrencePayload(texto, 'reabertura')
-  });
-  await addSystemHistory(ticket.id, texto, 'reabertura');
-  if (isOperatorOrAdmin()) await addOperatorEvent(ticket, 'reaberto', texto);
+  };
+
+  const batch = writeBatch(db);
+  batch.update(ticketRef, updatePayload);
+  batch.set(doc(collection(db, 'chamados', ticket.id, 'historico')), historyPayload(texto, 'reabertura'));
+  queueStatusTimelineEvents(batch, ticketRef, ticket, 'reaberto', texto, updatePayload);
+  queueOperatorEvent(batch, ticket, 'reaberto', texto);
+  await batch.commit();
+
+  state.historyLoadedFor = null;
+  await Promise.all([loadHistory(ticket.id), loadStatusTimeline(ticket.id)]).catch(() => {});
   showToast('Chamado reaberto.', 'success');
 }
 
 async function updateTicketStatus(ticket, status) {
   if (!STATUS_LABELS[status]) return;
   const texto = `Status alterado para ${STATUS_LABELS[status]}.`;
-  const tipo = status === 'reaberto' ? 'reabertura' : 'status';
-  await updateDoc(doc(db, 'chamados', ticket.id), {
+  const tipo = historyTypeForStatusChange(status);
+  const ticketRef = doc(db, 'chamados', ticket.id);
+  const updatePayload = {
     ...ticketStatusPayload(status),
     ...lastOccurrencePayload(texto, tipo)
-  });
+  };
 
-  await addSystemHistory(ticket.id, texto, tipo);
-  await addOperatorEvent(ticket, status, texto);
+  const batch = writeBatch(db);
+  batch.update(ticketRef, updatePayload);
+  batch.set(doc(collection(db, 'chamados', ticket.id, 'historico')), historyPayload(texto, tipo));
+  queueStatusTimelineEvents(batch, ticketRef, ticket, status, texto, updatePayload);
+  queueOperatorEvent(batch, ticket, status, texto);
+  await batch.commit();
 
+  state.historyLoadedFor = null;
+  await Promise.all([loadHistory(ticket.id), loadStatusTimeline(ticket.id)]).catch(() => {});
   showToast('Status atualizado.', 'success');
 }
 
@@ -1929,16 +2122,29 @@ async function createTicket(event) {
         ...lastOccurrencePayload(observacao, 'reabertura', anexo),
         ...(anexo ? { anexo } : {})
       };
-      await updateDoc(existingRef, updatePayload);
-      await addSystemHistory(existingRef.id, observacao, 'reabertura', anexo ? { anexo } : {});
+
+      const batch = writeBatch(db);
+      batch.update(existingRef, updatePayload);
+      batch.set(doc(collection(db, 'chamados', existingRef.id, 'historico')), historyPayload(observacao, 'reabertura', anexo ? { anexo } : {}));
+      queueStatusTimelineEvents(batch, existingRef, existingTicket, 'reaberto', observacao, updatePayload);
+      queueOperatorEvent(batch, existingTicket, 'reaberto', observacao);
+      await batch.commit();
+
       showToast(warning || 'Já existia chamado com essa chave e formulário. Reabri o mesmo chamado e incluí a nova ocorrência.', warning ? 'error' : 'success');
       state.selectedTicketId = existingRef.id;
     } else {
-      await setDoc(deterministicRef, createTicketBasePayload({ tipoChamado, chave, chaveBusca, org, observacao, tipoHistorico }));
-
       const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, file);
-      if (anexo) await updateDoc(deterministicRef, { ...lastOccurrencePayload(observacao, tipoHistorico, anexo), anexo });
-      await addSystemHistory(deterministicRef.id, observacao, tipoHistorico, anexo ? { anexo } : {});
+      const createPayload = {
+        ...createTicketBasePayload({ tipoChamado, chave, chaveBusca, org, observacao, tipoHistorico }),
+        ...(anexo ? { ...lastOccurrencePayload(observacao, tipoHistorico, anexo), anexo } : {})
+      };
+
+      await setDoc(deterministicRef, createPayload);
+
+      const batch = writeBatch(db);
+      batch.set(doc(collection(db, 'chamados', deterministicRef.id, 'historico')), historyPayload(observacao, tipoHistorico, anexo ? { anexo } : {}));
+      queueStatusTimelineEvents(batch, deterministicRef, null, 'aberto', observacao, createPayload);
+      await batch.commit();
 
       state.selectedTicketId = deterministicRef.id;
       showToast(warning || 'Chamado criado com sucesso.', warning ? 'error' : 'success');
@@ -1950,7 +2156,7 @@ async function createTicket(event) {
     els.ticketDialog.close();
   } catch (error) {
     const message = error?.code === 'permission-denied'
-      ? 'Permissão negada pelo Firestore. Publique o firestore.rules v21 atualizado.'
+      ? 'Permissão negada pelo Firestore. Publique o firestore.rules V27 atualizado.'
       : error.message;
     showToast(`Erro ao salvar chamado: ${message}`, 'error');
   } finally {
@@ -2018,29 +2224,43 @@ async function createProductTicket(event) {
 
     if (existingTicket) {
       const { anexo, warning } = await tryUploadTicketFile(existingRef.id, file);
-      await updateDoc(existingRef, {
+      const updatePayload = {
         ...ticketStatusPayload('reaberto'),
         ...requesterUpdatePayload(),
         ...lastOccurrencePayload(observacao, 'reabertura', anexo),
         ...(anexo ? { anexo } : {})
-      });
-      await addSystemHistory(existingRef.id, observacao, 'reabertura', anexo ? { anexo } : {});
+      };
+
+      const batch = writeBatch(db);
+      batch.update(existingRef, updatePayload);
+      batch.set(doc(collection(db, 'chamados', existingRef.id, 'historico')), historyPayload(observacao, 'reabertura', anexo ? { anexo } : {}));
+      queueStatusTimelineEvents(batch, existingRef, existingTicket, 'reaberto', observacao, updatePayload);
+      queueOperatorEvent(batch, existingTicket, 'reaberto', observacao);
+      await batch.commit();
+
       showToast(warning || 'Já existia chamado desse produto para este formulário. Reabri e incluí a nova ocorrência.', warning ? 'error' : 'success');
       state.selectedTicketId = existingRef.id;
     } else {
-      await setDoc(deterministicRef, createTicketBasePayload({
-        tipoChamado,
-        chave,
-        chaveBusca,
-        codigoProduto,
-        org,
-        observacao,
-        tipoHistorico: 'criacao'
-      }));
-
       const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, file);
-      if (anexo) await updateDoc(deterministicRef, { ...lastOccurrencePayload(observacao, 'criacao', anexo), anexo });
-      await addSystemHistory(deterministicRef.id, observacao, 'criacao', anexo ? { anexo } : {});
+      const createPayload = {
+        ...createTicketBasePayload({
+          tipoChamado,
+          chave,
+          chaveBusca,
+          codigoProduto,
+          org,
+          observacao,
+          tipoHistorico: 'criacao'
+        }),
+        ...(anexo ? { ...lastOccurrencePayload(observacao, 'criacao', anexo), anexo } : {})
+      };
+
+      await setDoc(deterministicRef, createPayload);
+
+      const batch = writeBatch(db);
+      batch.set(doc(collection(db, 'chamados', deterministicRef.id, 'historico')), historyPayload(observacao, 'criacao', anexo ? { anexo } : {}));
+      queueStatusTimelineEvents(batch, deterministicRef, null, 'aberto', observacao, createPayload);
+      await batch.commit();
 
       state.selectedTicketId = deterministicRef.id;
       showToast(warning || 'Chamado de produto criado com sucesso.', warning ? 'error' : 'success');
@@ -2052,7 +2272,7 @@ async function createProductTicket(event) {
     els.productTicketDialog.close();
   } catch (error) {
     const message = error?.code === 'permission-denied'
-      ? 'Permissão negada pelo Firestore. Publique o firestore.rules v21 atualizado.'
+      ? 'Permissão negada pelo Firestore. Publique o firestore.rules V27 atualizado.'
       : error.message;
     showToast(`Erro ao salvar chamado: ${message}`, 'error');
   } finally {
