@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         Xabuia • Loader oficial
 // @namespace    xabuia/infradesk
-// @version      1.0.0
+// @version      1.0.1
 // @description  Carrega sempre a versão publicada do Xabuia direto do GitHub Pages.
 // @author       Xabuia
-// @match        https://asp.infradesk.app/backend/chamados/painel*
-// @match        https://asp.infradesk.app/backend/chamados*
+// @match        https://*.infradesk.app/backend/chamados*
 // @run-at       document-end
 // @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
 // @homepageURL  https://chamadossicofe-design.github.io/xabuia/
