@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.4
+// @version      3.2.5
 // @description  Abre/atualiza chamados Xabuia direto do card do Infradesk. Não monitora desconhecidos; só acompanha chamados abertos pelo usuário e ativos na tela.
 // @author       Xabuia
 // @match        https://asp.infradesk.app/backend/chamados/painel*
@@ -26,7 +26,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || ((typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.2.4');
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || ((typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.2.5');
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
   const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
@@ -607,6 +607,67 @@
     };
   }
 
+  function forgetTicket(chave, ticketId = '') {
+    const clean = digitsOnly(chave || '');
+    if (clean) {
+      state.userTicketsByChave.delete(clean);
+      state.userTicketsByChaveBusca.delete(typedChaveBusca(clean));
+      state.userTicketsByChaveBusca.delete(legacyChaveBusca(clean));
+
+      const key = cacheKey(clean);
+      if (key) {
+        const cache = readCache();
+        if (cache[key]) {
+          delete cache[key];
+          writeCache(cache);
+        }
+      }
+
+      removeCardBoxByChave(clean);
+    }
+
+    if (ticketId) {
+      for (const [key, ticket] of state.userTicketsByChave.entries()) {
+        if (ticket?.id === ticketId) state.userTicketsByChave.delete(key);
+      }
+      for (const [key, ticket] of state.userTicketsByChaveBusca.entries()) {
+        if (ticket?.id === ticketId) state.userTicketsByChaveBusca.delete(key);
+      }
+      const unsub = state.ticketDocUnsubs.get(ticketId);
+      if (unsub) {
+        try { unsub(); } catch (_) {}
+        state.ticketDocUnsubs.delete(ticketId);
+      }
+    }
+  }
+
+  async function verifyKnownTicket(chave, known) {
+    if (!known?.id) return null;
+
+    const ref = db.collection('chamados').doc(known.id);
+
+    try {
+      const snap = await ref.get();
+      if (snap.exists) {
+        return { ref, ticket: { id: snap.id, ...snap.data() }, exists: true };
+      }
+
+      // O cache dizia que existia, mas o documento foi apagado no Firestore.
+      // Limpa o cache local para permitir abrir um chamado novo com a mesma chave.
+      forgetTicket(chave, known.id);
+      return null;
+    } catch (error) {
+      // Se a verificação do cache falhar por permissão/regras, não usamos o cache como fonte de verdade.
+      // Assim o script tenta o ID determinístico oficial logo abaixo.
+      if (error?.code === 'permission-denied') {
+        console.warn('[Xabuia] Cache local ignorado por permissão negada ao verificar documento:', error);
+        forgetTicket(chave, known.id);
+        return null;
+      }
+      throw error;
+    }
+  }
+
   /********************************************************************
    * UI
    ********************************************************************/
@@ -837,15 +898,21 @@
 
   async function findExistingTicketRef(chave) {
     const known = lookupKnownTicket(chave);
-    if (known?.id) return { ref: db.collection('chamados').doc(known.id), ticket: known, exists: true };
+    const verifiedKnown = known?.id ? await verifyKnownTicket(chave, known) : null;
+    if (verifiedKnown) return verifiedKnown;
+
     const primary = primaryRefForKey(chave);
     const primarySnap = primary ? await primary.get() : null;
     if (primarySnap?.exists) return { ref: primary, ticket: { id: primarySnap.id, ...primarySnap.data() }, exists: true };
+
     const legacy = legacyRefForKey(chave);
     if (legacy && legacy.id !== primary?.id) {
       const legacySnap = await legacy.get();
       if (legacySnap.exists) return { ref: legacy, ticket: { id: legacySnap.id, ...legacySnap.data() }, exists: true };
     }
+
+    // Nada existe no Firestore. Qualquer status antigo vindo de cache deve ser esquecido.
+    forgetTicket(chave, known?.id || '');
     return { ref: primary, ticket: null, exists: false };
   }
 
