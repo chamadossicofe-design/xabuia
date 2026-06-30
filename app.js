@@ -46,7 +46,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V27.1-historico-core-seguro';
+const APP_VERSION = 'V28-reservar-alerta-titulo';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -249,6 +249,45 @@ const state = {
   filterToken: 0,
   historyLoadedFor: null
 };
+
+const BASE_DOCUMENT_TITLE = document.title || 'Xabuia 1.0';
+let lastOpenReopenedTitleCount = 0;
+let titleAlertInterval = null;
+let titleAlertTimeout = null;
+
+function openReopenedLoadedCount() {
+  return state.tickets.filter((ticket) => ['aberto', 'reaberto'].includes(ticket?.status || 'aberto')).length;
+}
+
+function setBrowserTitleCount(count) {
+  document.title = count > 0 ? `(${count}) ${BASE_DOCUMENT_TITLE}` : BASE_DOCUMENT_TITLE;
+}
+
+function stopTitleBlink(count = openReopenedLoadedCount()) {
+  if (titleAlertInterval) window.clearInterval(titleAlertInterval);
+  if (titleAlertTimeout) window.clearTimeout(titleAlertTimeout);
+  titleAlertInterval = null;
+  titleAlertTimeout = null;
+  setBrowserTitleCount(count);
+}
+
+function updateBrowserTitleAlert() {
+  const count = openReopenedLoadedCount();
+
+  if (count > lastOpenReopenedTitleCount && count > 0) {
+    stopTitleBlink(count);
+    let blink = false;
+    titleAlertInterval = window.setInterval(() => {
+      blink = !blink;
+      document.title = blink ? `🔔 ${count} novo(s) • ${BASE_DOCUMENT_TITLE}` : `(${count}) ${BASE_DOCUMENT_TITLE}`;
+    }, 900);
+    titleAlertTimeout = window.setTimeout(() => stopTitleBlink(count), 9000);
+  } else if (!titleAlertInterval) {
+    setBrowserTitleCount(count);
+  }
+
+  lastOpenReopenedTitleCount = count;
+}
 
 function showToast(message, type = 'info') {
   els.toast.textContent = message;
@@ -501,6 +540,40 @@ function statusBadge(status) {
   const label = STATUS_LABELS[status] || status || 'Aberto';
   const safe = status || 'aberto';
   return `<span class="status ${safe}">${label}</span>`;
+}
+
+function ticketDisplayStatusPriority(status) {
+  return ({
+    reaberto: 0,
+    aberto: 1,
+    em_tratamento: 2,
+    informacoes_divergentes: 3,
+    devolver_recusar: 4,
+    finalizado: 5
+  })[status || 'aberto'] ?? 99;
+}
+
+function sortTicketsForDisplay(tickets) {
+  return [...tickets].sort((a, b) => {
+    const statusDiff = ticketDisplayStatusPriority(a.status) - ticketDisplayStatusPriority(b.status);
+    if (statusDiff !== 0) return statusDiff;
+
+    const updatedDiff = timestampMillis(b.atualizadoEm) - timestampMillis(a.atualizadoEm);
+    if (updatedDiff !== 0) return updatedDiff;
+
+    return String(ticketTitle(a)).localeCompare(String(ticketTitle(b)), 'pt-BR');
+  });
+}
+
+function canReserveTicket(ticket) {
+  return isOperatorOrAdmin()
+    && ['aberto', 'reaberto'].includes(ticket?.status || 'aberto')
+    && state.user?.uid;
+}
+
+function reserveButtonHtml(ticket) {
+  if (!canReserveTicket(ticket)) return '';
+  return `<button class="btn reserve-ticket-btn" type="button" data-reserve-ticket-id="${escapeHtml(ticket.id)}">Reservar</button>`;
 }
 
 function escapeHtml(value) {
@@ -1631,7 +1704,7 @@ function filteredTickets() {
     tickets = tickets.slice(0, 20);
   }
 
-  return tickets;
+  return sortTicketsForDisplay(tickets);
 }
 
 
@@ -1649,6 +1722,7 @@ function renderTickets() {
   setText(els.countDevolverRecusar, counts.devolver_recusar || 0);
   setText(els.countFinalizado, counts.finalizado || 0);
   setText(els.countTotal, tickets.length);
+  updateBrowserTitleAlert();
 
   if (!tickets.length) {
     els.ticketList.innerHTML = '<div class="empty-state">Nenhum chamado encontrado.</div>';
@@ -1662,12 +1736,17 @@ function renderTickets() {
   els.ticketList.innerHTML = tickets.map((ticket) => {
     const tipo = ticket.tipoChamado || 'nota_fiscal';
     return `
-      <button class="ticket-item ${ticket.id === state.selectedTicketId ? 'active' : ''}" type="button" data-ticket-id="${ticket.id}">
-        <div class="ticket-row">
-          <span class="ticket-key">${escapeHtml(ticketTitle(ticket))}</span>
-          ${statusBadge(ticket.status)}
+      <article class="ticket-item ${ticket.id === state.selectedTicketId ? 'active' : ''}" data-ticket-id="${escapeHtml(ticket.id)}" role="button" tabindex="0">
+        <div class="ticket-row ticket-row-v28">
+          <div class="ticket-main-info">
+            <span class="ticket-key">${escapeHtml(ticketTitle(ticket))}</span>
+            <div class="ticket-form-title">${escapeHtml(ticketTypeLabel(tipo))}</div>
+          </div>
+          <div class="ticket-status-stack">
+            ${statusBadge(ticket.status)}
+            ${reserveButtonHtml(ticket)}
+          </div>
         </div>
-        <div class="ticket-form-title">${escapeHtml(ticketTypeLabel(tipo))}</div>
         <div class="ticket-raw-key">${escapeHtml(ticketRawLine(ticket))}</div>
         <div class="ticket-meta">
           <span>${escapeHtml(ticket.organizacaoNome || 'Sem organização')}</span>
@@ -1677,7 +1756,7 @@ function renderTickets() {
           <span>•</span>
           <span>${formatDate(ticket.atualizadoEm)}</span>
         </div>
-      </button>
+      </article>
     `;
   }).join('');
 
@@ -1943,7 +2022,7 @@ async function addHistory(ticket) {
   } catch (error) {
     console.error('Erro ao salvar ocorrência completa:', error);
     const message = error?.code === 'permission-denied'
-      ? 'Permissão negada pelo Firestore. Publique o firestore.rules V27 e recarregue com Ctrl + F5.'
+      ? 'Permissão negada pelo Firestore. Confira se as regras mais recentes foram publicadas e recarregue com Ctrl + F5.'
       : error.message;
     showToast(`Erro ao salvar ocorrência: ${message}`, 'error');
   } finally {
@@ -2065,9 +2144,12 @@ async function reopenTicket(ticket, texto = 'Chamado reaberto.') {
   showToast('Chamado reaberto.', 'success');
 }
 
-async function updateTicketStatus(ticket, status) {
+async function updateTicketStatus(ticket, status, customText = '') {
   if (!STATUS_LABELS[status]) return;
-  const texto = `Status alterado para ${STATUS_LABELS[status]}.`;
+  const defaultText = status === 'em_tratamento'
+    ? statusAutoOccurrenceText(status)
+    : `Status alterado para ${STATUS_LABELS[status]}.`;
+  const texto = normalizeKey(customText || defaultText);
   const tipo = historyTypeForStatusChange(status);
   const ticketRef = doc(db, 'chamados', ticket.id);
   const updatePayload = {
@@ -2085,7 +2167,34 @@ async function updateTicketStatus(ticket, status) {
 
   state.historyLoadedFor = null;
   await Promise.all([loadHistory(ticket.id), loadStatusTimeline(ticket.id)]).catch(() => {});
-  showToast('Status atualizado.', 'success');
+  showToast(status === 'em_tratamento' ? 'Chamado reservado para você.' : 'Status atualizado.', 'success');
+}
+
+async function reserveTicket(ticketId) {
+  const ticket = state.tickets.find((item) => item.id === ticketId);
+  if (!ticket) return showToast('Chamado não encontrado na lista atual.', 'error');
+  if (!canReserveTicket(ticket)) return showToast('Este chamado não pode ser reservado agora.', 'error');
+
+  const buttons = [...document.querySelectorAll(`[data-reserve-ticket-id="${CSS.escape(ticketId)}"]`)];
+  buttons.forEach((button) => {
+    button.disabled = true;
+    button.textContent = 'Reservando...';
+  });
+
+  try {
+    await updateTicketStatus(ticket, 'em_tratamento', statusAutoOccurrenceText('em_tratamento'));
+  } catch (error) {
+    console.error('Erro ao reservar chamado:', error);
+    const message = error?.code === 'permission-denied'
+      ? 'Permissão negada pelo Firestore. Confira se as regras mais recentes foram publicadas e recarregue com Ctrl + F5.'
+      : error.message;
+    showToast(`Erro ao reservar chamado: ${message}`, 'error');
+  } finally {
+    buttons.forEach((button) => {
+      button.disabled = false;
+      button.textContent = 'Reservar';
+    });
+  }
 }
 
 
@@ -3295,6 +3404,14 @@ document.addEventListener('click', (event) => {
   const closeId = event.target?.dataset?.closeDialog;
   if (closeId) $(closeId)?.close();
 
+  const reserveButton = event.target.closest?.('[data-reserve-ticket-id]');
+  if (reserveButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    reserveTicket(reserveButton.dataset.reserveTicketId);
+    return;
+  }
+
   const ticketButton = event.target.closest?.('[data-ticket-id]');
   if (ticketButton) selectTicket(ticketButton.dataset.ticketId);
 
@@ -3303,6 +3420,14 @@ document.addEventListener('click', (event) => {
 
   const userButton = event.target.closest?.('[data-toggle-user]');
   if (userButton) toggleUser(userButton.dataset.toggleUser, userButton.dataset.active === 'true');
+});
+
+document.addEventListener('keydown', (event) => {
+  if (!['Enter', ' '].includes(event.key)) return;
+  const ticketCard = event.target.closest?.('[data-ticket-id]');
+  if (!ticketCard || event.target.closest?.('button, input, select, textarea, a')) return;
+  event.preventDefault();
+  selectTicket(ticketCard.dataset.ticketId);
 });
 
 document.addEventListener('change', (event) => {

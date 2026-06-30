@@ -969,3 +969,89 @@ button { cursor: pointer; }
     grid-template-columns: 1fr;
   }
 }
+
+/* V28 - organização dos cards, botão Reservar e alerta por título */
+.ticket-item {
+  cursor: pointer;
+}
+
+.ticket-item:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(21, 94, 239, .14);
+}
+
+.ticket-row-v28 {
+  align-items: flex-start;
+}
+
+.ticket-main-info {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ticket-status-stack {
+  display: grid;
+  gap: 9px;
+  justify-items: end;
+  align-content: start;
+  flex: 0 0 auto;
+}
+
+.reserve-ticket-btn {
+  min-height: 34px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(21, 94, 239, .25);
+  background: #eff6ff;
+  color: var(--primary-dark);
+  font-size: .78rem;
+  font-weight: 900;
+  box-shadow: none;
+}
+
+.reserve-ticket-btn:hover {
+  background: #dbeafe;
+  border-color: rgba(21, 94, 239, .45);
+}
+
+.reserve-ticket-btn:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
+.ticket-meta {
+  line-height: 1.35;
+}
+
+#statusTimelineList.history {
+  max-height: 300px;
+}
+
+#statusTimelineList .history-item {
+  border-left-color: rgba(21, 94, 239, .35);
+}
+
+#statusTimelineList .history-text {
+  line-height: 1.35;
+}
+
+#statusTimelineList .history-text strong {
+  margin-bottom: 3px;
+}
+
+@media (max-width: 540px) {
+  .ticket-row-v28 {
+    display: grid;
+    gap: 10px;
+  }
+
+  .ticket-status-stack {
+    justify-items: start;
+  }
+
+  .reserve-ticket-btn {
+    width: auto;
+  }
+}
