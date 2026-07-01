@@ -1,20 +1,17 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.5
-// @description  Abre/atualiza chamados Xabuia direto do card do Infradesk. Não monitora desconhecidos; só acompanha chamados abertos pelo usuário e ativos na tela.
+// @version      3.2.10
+// @description  Xabuia Infradesk híbrido preparado para loader page-context: Google 3.0, e-mail/senha, botão sair e modo econômico.
 // @author       Xabuia
-// @match        https://asp.infradesk.app/backend/chamados/painel*
-// @match        https://asp.infradesk.app/backend/chamados*
+// @match        https://*.infradesk.app/backend/chamados/painel*
+// @match        https://*.infradesk.app/backend/chamados*
 // @run-at       document-end
 // @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
 // @homepageURL  https://chamadossicofe-design.github.io/xabuia/
 // @updateURL    https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js
 // @downloadURL  https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js
-// @grant        GM_info
-// @grant        GM_xmlhttpRequest
-// @grant        GM_setClipboard
-// @connect      chamadossicofe-design.github.io
+// @grant        none
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js
@@ -23,10 +20,18 @@
 (function () {
   'use strict';
 
+  if (window.__XABUIA_APP_RUNNING__) {
+    console.warn('[Xabuia] Já existe uma instância do Xabuia ativa nesta página. Ignorando segunda carga.');
+    return;
+  }
+  window.__XABUIA_APP_RUNNING__ = true;
+  window.__XABUIA_APP_STARTED_AT__ = Date.now();
+  window.__XABUIA_APP_EXECUTION_MODE__ = window.__XABUIA_REMOTE_LOADER_ACTIVE ? 'loader-page-context' : 'tampermonkey-direto';
+
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || ((typeof GM_info !== 'undefined' && GM_info?.script?.version) ? GM_info.script.version : '3.2.5');
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.10-loader-ready';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
   const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
@@ -134,14 +139,9 @@
   }
 
   function xabuiaIsUpdateBlocked() {
-    const cache = readUpdateCache();
-    const latest = versionGateState.latestVersion || cache.latestVersion || '';
-    if (latest && compareVersions(XABUIA_VERSION, latest) < 0) {
-      versionGateState.blocked = true;
-      versionGateState.latestVersion = latest;
-      return true;
-    }
-    return versionGateState.blocked;
+    // V3.2.9: teste híbrido sem trava obrigatória interna.
+    // Mantém @updateURL/@downloadURL para o Tampermonkey atualizar, mas não bloqueia o uso.
+    return false;
   }
 
   function removeXabuiaUiForUpdateBlock() {
@@ -309,9 +309,49 @@
     // ou quando existe cache local de chamado ativo já aberto por ele.
     if (!user) clearAllCardBoxes();
 
+    if (user) {
+      try { localStorage.removeItem('xabuia_google_redirect_login_pending'); } catch (_) {}
+    }
+
     renderAuthInfo();
     scanCards();
   });
+
+  // V3.2.9: login principal por e-mail/senha sem popup. Google redirect mantido como opção secundária: o login Google do Tampermonkey passa a usar redirecionamento direto.
+  // Isso evita popup fantasma, bloqueador de popup e auth/cancelled-popup-request.
+  async function finishGoogleRedirectIfNeeded() {
+    try {
+      const pendingRaw = localStorage.getItem('xabuia_google_redirect_login_pending');
+      const pending = pendingRaw ? JSON.parse(pendingRaw) : null;
+      const pendingRecent = pending?.at && (Date.now() - Number(pending.at)) < (1000 * 60 * 10);
+
+      const result = await auth.getRedirectResult();
+      if (result?.user) {
+        state.user = result.user;
+        try { localStorage.removeItem('xabuia_google_redirect_login_pending'); } catch (_) {}
+        await loadProfileIfNeeded(false);
+        renderAuthInfo();
+        showToast('Conta Google conectada.', 'success');
+        return;
+      }
+
+      if (pendingRecent && state.user) {
+        try { localStorage.removeItem('xabuia_google_redirect_login_pending'); } catch (_) {}
+        renderAuthInfo();
+        showToast('Conta Google conectada.', 'success');
+      }
+    } catch (error) {
+      try { localStorage.removeItem('xabuia_google_redirect_login_pending'); } catch (_) {}
+      console.warn('[Xabuia] Erro ao finalizar redirecionamento Google:', error);
+      if (error?.code === 'auth/unauthorized-domain') {
+        showToast('Domínio do Infradesk não autorizado no Firebase Authentication.', 'error');
+      } else if (error?.message) {
+        showToast(`Erro ao concluir login Google: ${error.message}`, 'error');
+      }
+    }
+  }
+
+  // V3.2.9: sem redirect automático; Google volta a usar popup simples igual ao 3.0.
 
   async function loadProfileIfNeeded(force = false) {
     if (!state.user) return null;
@@ -678,7 +718,7 @@
     style.textContent = `
       .xabuia-card-btn{width:24px!important;height:24px!important;padding:1px!important;border:1px solid #c7d2fe!important;background:#eef2ff!important;border-radius:5px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;vertical-align:middle!important;margin-left:2px!important}.xabuia-card-btn:hover{background:#dbeafe!important;border-color:#155eef!important}.xabuia-card-btn img{width:18px!important;height:18px!important;display:block!important;border-radius:4px!important}.xabuia-card-btn.xabuia-missing-key{opacity:.35!important;filter:grayscale(1)!important}
       .xabuia-box{clear:both;margin:9px 0 10px;padding:0;border:1px solid rgba(21,94,239,.18);background:#fff;border-radius:12px;color:#172033;font-size:12px;line-height:1.35;overflow:hidden;box-shadow:0 10px 22px rgba(15,23,42,.10)}.xabuia-box-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;font-weight:900;color:#fff;background:linear-gradient(135deg,#155eef,#7c3aed)}.xabuia-box-title{display:inline-flex;align-items:center;gap:6px;min-width:0}.xabuia-box-title img{width:18px;height:18px;border-radius:5px;flex:0 0 auto}.xabuia-chip{display:inline-flex;align-items:center;border-radius:999px;padding:2px 7px;font-size:10px;font-weight:900;background:rgba(255,255,255,.96);color:#1d4ed8;border:1px solid rgba(255,255,255,.65);white-space:nowrap}.xabuia-box-body{padding:8px 9px 9px;background:#f8fafc;border-left:4px solid #155eef}.xabuia-last-text{margin-top:3px;padding:6px 7px;border-radius:9px;background:#fff;border:1px solid #e2e8f0;color:#334155;overflow-wrap:anywhere;white-space:pre-wrap}.xabuia-box small{color:#64748b;display:block;margin-top:5px}.xabuia-box.xabuia-status-reaberto .xabuia-box-head{background:linear-gradient(135deg,#f59e0b,#ea580c)}.xabuia-box.xabuia-status-em_tratamento .xabuia-box-head{background:linear-gradient(135deg,#b54708,#f97316)}.xabuia-box.xabuia-status-finalizado .xabuia-box-head{background:linear-gradient(135deg,#067647,#12b76a)}.xabuia-box.xabuia-status-informacoes_divergentes .xabuia-box-head,.xabuia-box.xabuia-status-devolver_recusar .xabuia-box-head{background:linear-gradient(135deg,#b42318,#ef4444)}
-      .xabuia-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:999999;display:none;align-items:center;justify-content:center;padding:20px}.xabuia-overlay.open{display:flex}.xabuia-modal{width:min(520px,calc(100vw - 32px));background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.22);overflow:hidden;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.xabuia-modal-head{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid #e5e7eb}.xabuia-modal-head img{width:42px;height:42px;border-radius:12px}.xabuia-modal-head h3{margin:0;font-size:18px;color:#172033}.xabuia-modal-head p{margin:2px 0 0;color:#687386;font-size:12px}.xabuia-close{margin-left:auto;border:0;border-radius:10px;background:#f1f5f9;width:34px;height:34px;font-size:18px;line-height:1}.xabuia-modal-body{padding:18px;display:grid;gap:12px}.xabuia-info{border:1px solid #dbeafe;background:#eff6ff;color:#1e3a8a;padding:10px 12px;border-radius:12px;font-size:12px}.xabuia-field{display:grid;gap:6px}.xabuia-field label{font-weight:800;color:#687386;font-size:12px}.xabuia-field textarea{min-height:105px;width:100%;border:1px solid #dfe7f0;border-radius:12px;padding:10px 12px;outline:none;resize:vertical;color:#172033}.xabuia-actions{display:flex;gap:8px;justify-content:flex-end;padding:0 18px 18px}.xabuia-btn{border:0;border-radius:12px;padding:10px 14px;font-weight:800;min-height:40px}.xabuia-btn.primary{background:#155eef;color:#fff}.xabuia-btn.ghost{background:#f8fafc;border:1px solid #dfe7f0;color:#172033}.xabuia-btn:disabled{opacity:.6;cursor:not-allowed}.xabuia-authbar{padding:10px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:12px}.xabuia-authbar.ok{background:#ecfdf3;color:#067647;border-color:#bbf7d0}.xabuia-toast{position:fixed;top:18px;right:18px;z-index:1000000;background:#111827;color:#fff;padding:12px 14px;border-radius:12px;box-shadow:0 18px 45px rgba(15,23,42,.18);max-width:min(420px,calc(100vw - 36px));display:none}.xabuia-toast.open{display:block}.xabuia-toast.success{background:#067647}.xabuia-toast.error{background:#b42318}
+      .xabuia-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:999999;display:none;align-items:center;justify-content:center;padding:20px}.xabuia-overlay.open{display:flex}.xabuia-modal{width:min(520px,calc(100vw - 32px));background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.22);overflow:hidden;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.xabuia-modal-head{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid #e5e7eb}.xabuia-modal-head img{width:42px;height:42px;border-radius:12px}.xabuia-modal-head h3{margin:0;font-size:18px;color:#172033}.xabuia-modal-head p{margin:2px 0 0;color:#687386;font-size:12px}.xabuia-close{margin-left:auto;border:0;border-radius:10px;background:#f1f5f9;width:34px;height:34px;font-size:18px;line-height:1}.xabuia-modal-body{padding:18px;display:grid;gap:12px}.xabuia-info{border:1px solid #dbeafe;background:#eff6ff;color:#1e3a8a;padding:10px 12px;border-radius:12px;font-size:12px}.xabuia-field{display:grid;gap:6px}.xabuia-field label{font-weight:800;color:#687386;font-size:12px}.xabuia-field textarea{min-height:105px;width:100%;border:1px solid #dfe7f0;border-radius:12px;padding:10px 12px;outline:none;resize:vertical;color:#172033}.xabuia-actions{display:flex;gap:8px;justify-content:flex-end;padding:0 18px 18px}.xabuia-btn{border:0;border-radius:12px;padding:10px 14px;font-weight:800;min-height:40px}.xabuia-btn.primary{background:#155eef;color:#fff}.xabuia-btn.ghost{background:#f8fafc;border:1px solid #dfe7f0;color:#172033}.xabuia-btn:disabled{opacity:.6;cursor:not-allowed}.xabuia-authbar{padding:10px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:12px}.xabuia-authbar.ok{background:#ecfdf3;color:#067647;border-color:#bbf7d0}.xabuia-login-panel{display:none;border:1px solid #dbeafe;background:#f8fafc;border-radius:12px;padding:10px 12px;gap:8px}.xabuia-login-panel.open{display:grid}.xabuia-login-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.xabuia-login-field{display:grid;gap:5px}.xabuia-login-field label{font-weight:900;color:#687386;font-size:11px}.xabuia-login-field input{width:100%;border:1px solid #dfe7f0;border-radius:10px;padding:9px 10px;outline:none;color:#172033}.xabuia-login-field input:focus{border-color:#155eef;box-shadow:0 0 0 3px rgba(21,94,239,.12)}.xabuia-login-actions{display:flex;gap:8px;flex-wrap:wrap}.xabuia-login-help{color:#64748b;font-size:11px;line-height:1.35}.xabuia-btn.small{min-height:34px;padding:8px 10px;font-size:12px}@media(max-width:560px){.xabuia-login-grid{grid-template-columns:1fr}}.xabuia-toast{position:fixed;top:18px;right:18px;z-index:1000000;background:#111827;color:#fff;padding:12px 14px;border-radius:12px;box-shadow:0 18px 45px rgba(15,23,42,.18);max-width:min(420px,calc(100vw - 36px));display:none}.xabuia-toast.open{display:block}.xabuia-toast.success{background:#067647}.xabuia-toast.error{background:#b42318}
     `;
     document.head.appendChild(style);
   }
@@ -695,16 +735,32 @@
         </div>
         <div class="xabuia-modal-body">
           <div id="xabuia-authbar" class="xabuia-authbar">Verificando login...</div>
+          <div id="xabuia-login-panel" class="xabuia-login-panel">
+            <div class="xabuia-login-grid">
+              <div class="xabuia-login-field"><label for="xabuia-email-login">E-mail Xabuia</label><input id="xabuia-email-login" type="email" autocomplete="email" placeholder="usuario@email.com"></div>
+              <div class="xabuia-login-field"><label for="xabuia-password-login">Senha</label><input id="xabuia-password-login" type="password" autocomplete="current-password" placeholder="Senha"></div>
+            </div>
+            <div class="xabuia-login-actions">
+              <button id="xabuia-login-email" class="xabuia-btn primary small" type="button">Entrar</button>
+              <button id="xabuia-reset-password" class="xabuia-btn ghost small" type="button">Definir/recuperar senha</button>
+              <button id="xabuia-google-redirect" class="xabuia-btn ghost small" type="button">Conectar Google</button>
+            </div>
+            <div class="xabuia-login-help">Você pode entrar com e-mail/senha ou tentar o Google igual à versão 3.0. Use <strong>Sair</strong> para encerrar a sessão do Xabuia neste navegador.</div>
+          </div>
           <div id="xabuia-info" class="xabuia-info"></div>
           <div class="xabuia-field"><label for="xabuia-comment">Ocorrência obrigatória</label><textarea id="xabuia-comment" placeholder="Ex.: Caminhão na porta aguardando liberação da nota fiscal..."></textarea></div>
           <div class="xabuia-info" style="background:#f8fafc;color:#475569;border-color:#e2e8f0;">Se a NF ainda não existir no Xabuia, será aberta como <strong>Aberto</strong>. Se já existir e estiver encerrada, será <strong>Reaberta</strong>. Se já estiver ativa, será adicionada apenas uma nova ocorrência.</div>
         </div>
-        <div class="xabuia-actions"><button id="xabuia-login" class="xabuia-btn ghost" type="button">Conectar Google</button><button id="xabuia-cancel" class="xabuia-btn ghost" type="button">Cancelar</button><button id="xabuia-save" class="xabuia-btn primary" type="button">Salvar Xabuia</button></div>
+        <div class="xabuia-actions"><button id="xabuia-login" class="xabuia-btn ghost" type="button">Entrar no Xabuia</button><button id="xabuia-logout" class="xabuia-btn ghost" type="button">Sair</button><button id="xabuia-cancel" class="xabuia-btn ghost" type="button">Cancelar</button><button id="xabuia-save" class="xabuia-btn primary" type="button">Salvar Xabuia</button></div>
       </div>`;
     document.body.appendChild(overlay);
     $('#xabuia-close').addEventListener('click', closeModal);
     $('#xabuia-cancel').addEventListener('click', closeModal);
-    $('#xabuia-login').addEventListener('click', loginGoogle);
+    $('#xabuia-login').addEventListener('click', toggleLoginPanel);
+    $('#xabuia-logout')?.addEventListener('click', logoutXabuia);
+    $('#xabuia-login-email')?.addEventListener('click', loginWithEmailPassword);
+    $('#xabuia-reset-password')?.addEventListener('click', sendPasswordResetFromPanel);
+    $('#xabuia-google-redirect')?.addEventListener('click', loginGoogle);
     $('#xabuia-save').addEventListener('click', saveActiveTicket);
     overlay.addEventListener('click', (event) => { if (event.target === overlay) closeModal(); });
   }
@@ -726,10 +782,16 @@
   function renderAuthInfo() {
     const authbar = $('#xabuia-authbar');
     const loginBtn = $('#xabuia-login');
+    const logoutBtn = $('#xabuia-logout');
     const saveBtn = $('#xabuia-save');
     if (!authbar || !loginBtn || !saveBtn) return;
     loginBtn.style.display = state.user ? 'none' : '';
-    if (!state.user) { authbar.className = 'xabuia-authbar'; authbar.innerHTML = 'Conecte sua conta Google do Xabuia para salvar direto no Firebase.'; saveBtn.disabled = true; return; }
+    if (logoutBtn) logoutBtn.style.display = state.user ? '' : 'none';
+    if (state.user) {
+      const panel = $('#xabuia-login-panel');
+      if (panel) panel.classList.remove('open');
+    }
+    if (!state.user) { authbar.className = 'xabuia-authbar'; authbar.innerHTML = 'Entre com Google ou e-mail/senha do Xabuia.'; saveBtn.disabled = true; return; }
     if (!state.profile) { authbar.className = 'xabuia-authbar'; authbar.innerHTML = `Logado como <strong>${escapeHtml(state.user.email)}</strong>, aguardando perfil Xabuia.`; saveBtn.disabled = true; return; }
     if (state.profile.ativo === false) { authbar.className = 'xabuia-authbar'; authbar.innerHTML = 'Sua conta Xabuia está bloqueada.'; saveBtn.disabled = true; return; }
     if (state.profile.papel !== 'usuario') { authbar.className = 'xabuia-authbar'; authbar.innerHTML = `Logado como <strong>${escapeHtml(state.profile.nome || state.user.email)}</strong>, mas abertura pelo Infradesk é permitida apenas para usuários comuns.`; saveBtn.disabled = true; return; }
@@ -861,15 +923,124 @@
     }
   }
   function closeModal() { $('#xabuia-overlay')?.classList.remove('open'); state.activeCard = null; state.activeData = null; state.activeTicketLookup = null; state.isSaving = false; }
+  function toggleLoginPanel() {
+    const panel = $('#xabuia-login-panel');
+    if (!panel) return;
+    panel.classList.toggle('open');
+    if (panel.classList.contains('open')) {
+      setTimeout(() => $('#xabuia-email-login')?.focus(), 60);
+    }
+  }
+
+  function readEmailLoginFields() {
+    return {
+      email: String($('#xabuia-email-login')?.value || '').trim(),
+      password: String($('#xabuia-password-login')?.value || '')
+    };
+  }
+
+  async function loginWithEmailPassword() {
+    if (loginWithEmailPassword.inProgress) return loginWithEmailPassword.inProgress;
+
+    const { email, password } = readEmailLoginFields();
+    if (!email) { $('#xabuia-email-login')?.focus(); showToast('Informe o e-mail do Xabuia.', 'error'); return; }
+    if (!password) { $('#xabuia-password-login')?.focus(); showToast('Informe a senha do Xabuia.', 'error'); return; }
+
+    const btn = $('#xabuia-login-email');
+    const originalText = btn?.textContent || 'Entrar';
+    loginWithEmailPassword.inProgress = (async () => {
+      try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Entrando...'; }
+        await auth.signInWithEmailAndPassword(email, password);
+        await loadProfileIfNeeded(true);
+        renderAuthInfo();
+        showToast('Xabuia conectado.', 'success');
+      } catch (error) {
+        const code = error?.code || '';
+        const map = {
+          'auth/invalid-credential': 'E-mail ou senha inválidos. Se essa conta só entrava pelo Google, clique em Definir/recuperar senha.',
+          'auth/wrong-password': 'Senha inválida. Use Definir/recuperar senha para criar uma nova.',
+          'auth/user-not-found': 'Não encontrei esse e-mail no Xabuia.',
+          'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco e tente novamente.',
+          'auth/network-request-failed': 'Falha de rede. Confira sua conexão.',
+          'auth/operation-not-allowed': 'Login por e-mail/senha não está habilitado no Firebase Authentication.'
+        };
+        showToast(map[code] || error.message || 'Erro ao entrar no Xabuia.', 'error');
+      } finally {
+        loginWithEmailPassword.inProgress = null;
+        const currentBtn = $('#xabuia-login-email');
+        if (currentBtn) { currentBtn.disabled = false; currentBtn.textContent = originalText; }
+      }
+    })();
+
+    return loginWithEmailPassword.inProgress;
+  }
+
+  async function sendPasswordResetFromPanel() {
+    const { email } = readEmailLoginFields();
+    if (!email) { $('#xabuia-email-login')?.focus(); showToast('Informe o e-mail para enviar o link de senha.', 'error'); return; }
+
+    const btn = $('#xabuia-reset-password');
+    const originalText = btn?.textContent || 'Definir/recuperar senha';
+    try {
+      if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+      await auth.sendPasswordResetEmail(email);
+      showToast('Enviei o link para definir/recuperar senha. Confira o e-mail.', 'success');
+    } catch (error) {
+      const code = error?.code || '';
+      const map = {
+        'auth/user-not-found': 'Não encontrei esse e-mail no Xabuia.',
+        'auth/invalid-email': 'E-mail inválido.',
+        'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco e tente novamente.',
+        'auth/operation-not-allowed': 'Login por e-mail/senha não está habilitado no Firebase Authentication.'
+      };
+      showToast(map[code] || error.message || 'Erro ao enviar link de senha.', 'error');
+    } finally {
+      const currentBtn = $('#xabuia-reset-password');
+      if (currentBtn) { currentBtn.disabled = false; currentBtn.textContent = originalText; }
+    }
+  }
+
   async function loginGoogle() {
+    // V3.2.9: fluxo Google propositalmente igual ao 3.0.
+    // Popup simples, chamado direto pelo clique do botão, sem redirect e sem trava intermediária.
     try {
       const provider = new firebase.auth.GoogleAuthProvider();
       await auth.signInWithPopup(provider);
-      await loadProfileIfNeeded(false);
+      await loadProfileIfNeeded(true);
       renderAuthInfo();
       showToast('Conta Google conectada.', 'success');
     } catch (error) {
-      showToast(error?.code === 'auth/unauthorized-domain' ? 'Domínio asp.infradesk.app não autorizado no Firebase Authentication.' : (error.message || 'Erro ao conectar Google.'), 'error');
+      const message = error?.code === 'auth/unauthorized-domain'
+        ? 'Domínio do Infradesk não autorizado no Firebase Authentication.'
+        : (error.message || 'Erro ao conectar Google.');
+      showToast(message, 'error');
+    }
+  }
+
+  async function logoutXabuia() {
+    const btn = $('#xabuia-logout');
+    const originalText = btn?.textContent || 'Sair';
+    try {
+      if (btn) { btn.disabled = true; btn.textContent = 'Saindo...'; }
+      stopAllTicketMonitors();
+      await auth.signOut();
+      state.user = null;
+      state.profile = null;
+      state.profileLoading = null;
+      state.userTicketsByChaveBusca.clear();
+      state.userTicketsByChave.clear();
+      state.activeTicketLookup = null;
+      clearAllCardBoxes();
+      try { localStorage.removeItem('xabuia_google_redirect_login_pending'); } catch (_) {}
+      renderAuthInfo();
+      scanCards();
+      showToast('Sessão Xabuia encerrada neste navegador.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Erro ao sair do Xabuia.', 'error');
+    } finally {
+      const currentBtn = $('#xabuia-logout');
+      if (currentBtn) { currentBtn.disabled = false; currentBtn.textContent = originalText; }
     }
   }
 
@@ -924,7 +1095,7 @@
     const comment = normalizeText($('#xabuia-comment')?.value || '');
     if (!data?.chave || data.chave.length !== 44) return showToast('Chave NF-e inválida.', 'error');
     if (!comment) { showToast('Escreva a ocorrência para salvar a Xabuia.', 'error'); $('#xabuia-comment')?.focus(); return; }
-    if (!state.user) return showToast('Conecte sua conta Google primeiro.', 'error');
+    if (!state.user) return showToast('Conecte sua conta Xabuia primeiro.', 'error');
     if (!state.profile) await loadProfileIfNeeded(true);
     if (!canOpenFromInfradesk()) return showToast('Usuário sem permissão ou sem organização para abrir Xabuia pelo Infradesk.', 'error');
 
@@ -997,22 +1168,13 @@
   });
 
   function boot() {
-    if (xabuiaIsUpdateBlocked()) {
-      showXabuiaUpdateBlock(versionGateState.latestVersion || readUpdateCache()?.latestVersion || '');
-      checkXabuiaLatestVersion(true);
-      return;
-    }
-    // Força uma consulta real ao GitHub quando a página carrega.
-    // Isso evita depender do agendamento automático do Tampermonkey.
-    checkXabuiaLatestVersion(true);
-    window.setInterval(() => checkXabuiaLatestVersion(true), XABUIA_VERSION_CHECK_EVERY_MS);
     injectStyles();
     ensureModal();
     scanCards();
     observer.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener('focus', () => { checkXabuiaLatestVersion(false); scanCards(); });
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkXabuiaLatestVersion(false); scanCards(); } });
-    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Modo manual: zero monitoramento de cards desconhecidos; só chamados ativos já abertos.`);
+    window.addEventListener('focus', scanCards);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) scanCards(); });
+    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Login híbrido: Google estilo 3.0 + e-mail/senha + botão sair.`);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
