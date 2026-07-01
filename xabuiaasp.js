@@ -748,7 +748,7 @@
             <div class="xabuia-login-help">Você pode entrar com e-mail/senha ou tentar o Google igual à versão 3.0. Use <strong>Sair</strong> para encerrar a sessão do Xabuia neste navegador.</div>
           </div>
           <div id="xabuia-info" class="xabuia-info"></div>
-          <div class="xabuia-field"><label for="xabuia-comment">Ocorrência obrigatória</label><textarea id="xabuia-comment" placeholder="Ex.: Caminhão na porta aguardando liberação da nota fiscal..."></textarea></div>
+          <div class="xabuia-field"><label for="xabuia-comment">Ocorrência obrigatória</label><textarea id="xabuia-comment" placeholder="Ex.: Regra fiscal, ICMS divergente, GUIA ST..."></textarea></div>
           <div class="xabuia-info" style="background:#f8fafc;color:#475569;border-color:#e2e8f0;">Se a NF ainda não existir no Xabuia, será aberta como <strong>Aberto</strong>. Se já existir e estiver encerrada, será <strong>Reaberta</strong>. Se já estiver ativa, será adicionada apenas uma nova ocorrência.</div>
         </div>
         <div class="xabuia-actions"><button id="xabuia-login" class="xabuia-btn ghost" type="button">Entrar no Xabuia</button><button id="xabuia-logout" class="xabuia-btn ghost" type="button">Sair</button><button id="xabuia-cancel" class="xabuia-btn ghost" type="button">Cancelar</button><button id="xabuia-save" class="xabuia-btn primary" type="button">Salvar Xabuia</button></div>
