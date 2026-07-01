@@ -46,7 +46,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V28-reservar-alerta-titulo';
+const APP_VERSION = 'V30-card-nfe-enxuto-fila';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -93,6 +93,7 @@ const ALL_TICKET_STATUSES = [...ACTIVE_STATUSES, ...CLOSED_STATUSES];
 const LIVE_OPEN_LIMIT = 250;
 const LIVE_TREATMENT_LIMIT = 250;
 const ADMIN_ACTIVE_QUERY_LIMIT_PER_STATUS = 200;
+const ADMIN_FILTERED_QUERY_LIMIT_PER_STATUS = 300;
 const ADMIN_SLA_SETTINGS_KEY = 'xabuia_admin_sla_v1';
 const COUNTED_STATUS_VALUES = ['aberto', 'reaberto', 'em_tratamento'];
 const HISTORY_LIMIT = 300;
@@ -430,7 +431,19 @@ function parseNfeKey(chave) {
 function compactKeyTitle(chave) {
   const parsed = parseNfeKey(chave);
   if (!parsed) return normalizeKey(chave);
-  return `NF ${parsed.numero} • CNPJ ${parsed.cnpj}`;
+  return `NF ${parsed.numero}`;
+}
+
+function invoiceCnpjLine(chave) {
+  const parsed = parseNfeKey(chave);
+  return parsed ? `CNPJ ${parsed.cnpj}` : '';
+}
+
+function shortAccessKey(chave) {
+  const clean = digitsOnly(chave);
+  if (!clean) return normalizeKey(chave || '');
+  if (clean.length <= 22) return clean;
+  return `${clean.slice(0, 10)}…${clean.slice(-8)}`;
 }
 
 function renderKeyInfo(chave) {
@@ -445,8 +458,6 @@ function renderKeyInfo(chave) {
       <div class="key-facts">
         <span><strong>Número:</strong> ${escapeHtml(parsed.numero)}</span>
         <span><strong>CNPJ:</strong> ${escapeHtml(parsed.cnpj)}</span>
-        <span><strong>Série:</strong> ${escapeHtml(parsed.serie)}</span>
-        <span><strong>Modelo:</strong> ${escapeHtml(parsed.modelo)}</span>
       </div>
     </div>
   `;
@@ -542,6 +553,38 @@ function statusBadge(status) {
   return `<span class="status ${safe}">${label}</span>`;
 }
 
+function colorHash(value) {
+  let hash = 0;
+  const textValue = String(value || 'Sem organização');
+  for (let i = 0; i < textValue.length; i += 1) {
+    hash = ((hash << 5) - hash) + textValue.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function orgHue(orgName) {
+  return colorHash(orgName) % 360;
+}
+
+function orgChipHtml(orgName, extraClass = '') {
+  const label = normalizeKey(orgName || 'Sem organização');
+  const hue = orgHue(label);
+  const safeClass = extraClass ? ` ${extraClass}` : '';
+  return `<span class="org-chip${safeClass}" style="--org-h:${hue}"><span class="org-dot"></span>${escapeHtml(label)}</span>`;
+}
+
+function ticketQueueLabel(ticket) {
+  const status = ticket?.status || 'aberto';
+  const age = formatMinutes(ticketAgeMinutes(ticket));
+
+  if (status === 'aberto') return `${age}`;
+  if (status === 'reaberto') return `${age}`;
+  if (status === 'em_tratamento') return `${age}`;
+
+  return `Atualizado ${formatDate(ticket?.atualizadoEm)}`;
+}
+
 function ticketDisplayStatusPriority(status) {
   return ({
     reaberto: 0,
@@ -553,13 +596,22 @@ function ticketDisplayStatusPriority(status) {
   })[status || 'aberto'] ?? 99;
 }
 
+function queueTimestamp(ticket) {
+  return statusStartedAtMillis(ticket, ticket?.status)
+    || timestampMillis(ticket?.criadoEm)
+    || timestampMillis(ticket?.atualizadoEm)
+    || Date.now();
+}
+
 function sortTicketsForDisplay(tickets) {
   return [...tickets].sort((a, b) => {
     const statusDiff = ticketDisplayStatusPriority(a.status) - ticketDisplayStatusPriority(b.status);
     if (statusDiff !== 0) return statusDiff;
 
-    const updatedDiff = timestampMillis(b.atualizadoEm) - timestampMillis(a.atualizadoEm);
-    if (updatedDiff !== 0) return updatedDiff;
+    // Fila de atendimento: dentro do mesmo status, o mais antigo fica em cima.
+    // Assim os chamados mais novos descem para a parte de baixo da fila.
+    const queueDiff = queueTimestamp(a) - queueTimestamp(b);
+    if (queueDiff !== 0) return queueDiff;
 
     return String(ticketTitle(a)).localeCompare(String(ticketTitle(b)), 'pt-BR');
   });
@@ -714,8 +766,11 @@ function ticketTitle(ticket) {
 
 function ticketRawLine(ticket) {
   const type = ticket?.tipoChamado || 'nota_fiscal';
-  if (isProductTicketType(type)) return `Código do produto: ${ticket.codigoProduto || ticket.chave || '—'}`;
-  return ticket.chave || '';
+  if (isProductTicketType(type)) return `Produto: ${ticket.codigoProduto || ticket.chave || '—'}`;
+
+  const parsed = parseNfeKey(ticket?.chave || '');
+  if (!parsed) return ticket.chave || '';
+  return `CNPJ ${parsed.cnpj} • Série ${parsed.serie} • Modelo ${parsed.modelo} • Chave ${shortAccessKey(parsed.chave)}`;
 }
 
 function isTabularText(text) {
@@ -764,6 +819,76 @@ function renderProductInfo(ticket) {
 function renderTicketInfo(ticket) {
   if (isProductTicketType(ticket.tipoChamado)) return renderProductInfo(ticket);
   return renderKeyInfo(ticket.chave);
+}
+
+
+function renderTicketInfoCompact(ticket) {
+  // Compatibilidade: outras partes antigas podem chamar esta função.
+  return renderTicketDetailFacts(ticket);
+}
+
+function ticketInvoiceParts(ticket) {
+  return parseNfeKey(ticket?.chave || '') || null;
+}
+
+function fullAccessKey(ticket) {
+  if (isProductTicketType(ticket?.tipoChamado)) return normalizeKey(ticket?.codigoProduto || ticket?.chave || '—');
+  const parsed = ticketInvoiceParts(ticket);
+  return parsed?.chave || normalizeKey(ticket?.chave || '—');
+}
+
+function ticketCardTitleHtml(ticket) {
+  if (isProductTicketType(ticket?.tipoChamado)) {
+    return `Produto: <span>${escapeHtml(ticket?.codigoProduto || ticket?.chave || '—')}</span>`;
+  }
+
+  const parsed = ticketInvoiceParts(ticket);
+  if (!parsed) return escapeHtml(ticket?.chave || 'Chamado');
+
+  return `NF: <span>${escapeHtml(parsed.numero)}</span> <em>•</em> CNPJ: <span>${escapeHtml(parsed.cnpj)}</span>`;
+}
+
+function ticketFullReferenceHtml(ticket) {
+  if (isProductTicketType(ticket?.tipoChamado)) {
+    return `<span>Código:</span> <code>${escapeHtml(fullAccessKey(ticket))}</code>`;
+  }
+
+  return `<span>Chave de acesso:</span> <code>${escapeHtml(fullAccessKey(ticket))}</code>`;
+}
+
+function ticketTreatingHtml(ticket, className = 'operator-chip') {
+  const name = normalizeKey(ticket?.operadorTratamentoNome || ticket?.operadorTratamentoEmail || '');
+  if (name) return `<span class="${className}">Tratando: <strong>${escapeHtml(name)}</strong></span>`;
+  return '<span class="operator-empty">Tratando: <strong>—</strong></span>';
+}
+
+function renderTicketDetailFacts(ticket) {
+  if (isProductTicketType(ticket?.tipoChamado)) {
+    return `
+      <div class="detail-facts-line-v30 detail-facts-product">
+        <span><strong>Produto</strong> ${escapeHtml(ticket?.codigoProduto || ticket?.chave || '—')}</span>
+        <span><strong>Organização</strong> ${escapeHtml(ticket?.organizacaoNome || '—')}</span>
+        <span class="detail-full-key-inline"><strong>Código:</strong> <code>${escapeHtml(fullAccessKey(ticket))}</code></span>
+      </div>
+    `;
+  }
+
+  const parsed = ticketInvoiceParts(ticket);
+  if (!parsed) {
+    return `
+      <div class="detail-facts-line-v30">
+        <span class="detail-full-key-inline"><strong>Referência:</strong> <code>${escapeHtml(ticket?.chave || '—')}</code></span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="detail-facts-line-v30 detail-facts-invoice">
+      <span><strong>NF</strong> ${escapeHtml(parsed.numero)}</span>
+      <span><strong>CNPJ</strong> ${escapeHtml(parsed.cnpj)}</span>
+      <span class="detail-full-key-inline"><strong>Chave:</strong> <code>${escapeHtml(parsed.chave)}</code></span>
+    </div>
+  `;
 }
 
 function updateProductObsPreview() {
@@ -1278,7 +1403,7 @@ function startTicketsListener() {
   if (isAdmin()) {
     state.tickets = [];
     renderTickets();
-    setText(els.liveStatus, 'Admin: consulta manual');
+    setText(els.liveStatus, 'Admin: consulta manual econômica');
     return;
   }
 
@@ -1708,6 +1833,7 @@ function filteredTickets() {
 }
 
 
+
 function renderTickets() {
   const tickets = filteredTickets();
   const counts = tickets.reduce((acc, ticket) => {
@@ -1735,26 +1861,31 @@ function renderTickets() {
 
   els.ticketList.innerHTML = tickets.map((ticket) => {
     const tipo = ticket.tipoChamado || 'nota_fiscal';
+    const status = ticket.status || 'aberto';
     return `
-      <article class="ticket-item ${ticket.id === state.selectedTicketId ? 'active' : ''}" data-ticket-id="${escapeHtml(ticket.id)}" role="button" tabindex="0">
-        <div class="ticket-row ticket-row-v28">
-          <div class="ticket-main-info">
-            <span class="ticket-key">${escapeHtml(ticketTitle(ticket))}</span>
-            <div class="ticket-form-title">${escapeHtml(ticketTypeLabel(tipo))}</div>
-          </div>
-          <div class="ticket-status-stack">
-            ${statusBadge(ticket.status)}
-            ${reserveButtonHtml(ticket)}
-          </div>
+      <article class="ticket-item ticket-item-v30 ticket-framed ticket-status-${escapeHtml(status)} ${ticket.id === state.selectedTicketId ? 'active' : ''}" data-ticket-id="${escapeHtml(ticket.id)}" role="button" tabindex="0">
+        <div class="ticket-type-legend">${escapeHtml(ticketTypeLabel(tipo))}</div>
+
+        <div class="ticket-card-head-v30">
+		  <div class="ticket-card-main-v30">
+			<strong class="ticket-card-title-v30">${ticketCardTitleHtml(ticket)}</strong>
+		  </div>
+
+		  <div class="ticket-status-stack">
+			${statusBadge(status)}
+			${reserveButtonHtml(ticket)}
+		  </div>
+		</div>
+
+        <div class="ticket-access-key-v30" title="${escapeHtml(fullAccessKey(ticket))}">
+          ${ticketFullReferenceHtml(ticket)}
         </div>
-        <div class="ticket-raw-key">${escapeHtml(ticketRawLine(ticket))}</div>
-        <div class="ticket-meta">
-          <span>${escapeHtml(ticket.organizacaoNome || 'Sem organização')}</span>
-          <span>•</span>
-          <span>Criado por ${escapeHtml(ticket.criadoPorNome || ticket.criadoPorEmail || '—')}</span>
-          ${ticket.operadorTratamentoNome ? `<span>•</span><span>Tratando: ${escapeHtml(ticket.operadorTratamentoNome)}</span>` : ''}
-          <span>•</span>
-          <span>${formatDate(ticket.atualizadoEm)}</span>
+
+        <div class="ticket-card-footer-v30">
+          ${orgChipHtml(ticket.organizacaoNome)}
+          <span>Solicitante: <strong>${escapeHtml(ticket.criadoPorNome || ticket.criadoPorEmail || '—')}</strong></span>
+          ${ticketTreatingHtml(ticket)}
+          <span class="queue-age">${escapeHtml(ticketQueueLabel(ticket))}</span>
         </div>
       </article>
     `;
@@ -1776,35 +1907,50 @@ async function selectTicket(ticketId) {
 }
 
 
+
 async function renderTicketDetail(ticket) {
   if (!ticket) {
     els.ticketDetail.className = 'card detail-card empty';
     els.ticketDetail.innerHTML = `
       <h2>Selecione um chamado</h2>
-      <p class="muted">Clique em um chamado para ver o histórico e adicionar novas observações.</p>
+      <p class="muted">Clique em um chamado para ver a nota, a ocorrência inicial e adicionar novas observações.</p>
     `;
     return;
   }
 
+  const tipo = ticket.tipoChamado || 'nota_fiscal';
+  const status = ticket.status || 'aberto';
   const assignedLine = ticket.status === 'em_tratamento' && ticket.operadorTratamentoNome
-    ? `<p class="muted">Em tratamento com <strong>${escapeHtml(ticket.operadorTratamentoNome)}</strong>.</p>`
+    ? `<span class="detail-assigned-chip">Tratando: <strong>${escapeHtml(ticket.operadorTratamentoNome)}</strong></span>`
     : '';
 
-  els.ticketDetail.className = 'card detail-card';
+  els.ticketDetail.className = 'card detail-card detail-card-v30';
   els.ticketDetail.innerHTML = `
-    <div class="section-head detail-head">
-      <div>
-        <div class="detail-form-title">${escapeHtml(ticketTypeLabel(ticket.tipoChamado || 'nota_fiscal'))}</div>
-        <h2 class="detail-title">${escapeHtml(ticketTitle(ticket))}</h2>
-        <p class="muted">${escapeHtml(ticket.organizacaoNome || 'Sem organização')} • Atualizado ${formatDate(ticket.atualizadoEm)}</p>
-        ${assignedLine}
+    <section class="detail-summary-panel detail-summary-panel-v30 ticket-framed ticket-status-${escapeHtml(status)}">
+      <div class="ticket-type-legend detail-type-legend">${escapeHtml(ticketTypeLabel(tipo))}</div>
+
+      <div class="detail-frame-top-v30">
+        <div class="detail-summary-meta detail-summary-meta-v30">
+          ${orgChipHtml(ticket.organizacaoNome, 'org-chip-detail')}
+          <span>Atualizado ${formatDate(ticket.atualizadoEm)}</span>
+          ${assignedLine}
+          <span class="queue-age detail-queue-age">${escapeHtml(ticketQueueLabel(ticket))}</span>
+        </div>
+        ${statusBadge(status)}
       </div>
-      ${statusBadge(ticket.status)}
-    </div>
 
-    ${renderTicketInfo(ticket)}
+      <div class="detail-frame-grid-v30">
+        <div class="detail-facts-card-v30">
+          ${renderTicketDetailFacts(ticket)}
+        </div>
 
-    ${ticket.anexo?.url ? `<p><a class="attachment-link" href="${escapeHtml(ticket.anexo.url)}" target="_blank" rel="noopener">Abrir último anexo: ${escapeHtml(ticket.anexo.nome || 'arquivo')}</a></p>` : ''}
+        <div id="openingSummaryBox" class="opening-summary opening-summary-v30 opening-summary-loading">
+          Carregando ocorrência inicial...
+        </div>
+      </div>
+    </section>
+
+    ${ticket.anexo?.url ? `<p class="detail-last-attachment"><a class="attachment-link" href="${escapeHtml(ticket.anexo.url)}" target="_blank" rel="noopener">Abrir último anexo: ${escapeHtml(ticket.anexo.nome || 'arquivo')}</a></p>` : ''}
 
     <div class="occurrence-panel">
       ${isOperatorOrAdmin() ? `
@@ -1846,11 +1992,8 @@ async function renderTicketDetail(ticket) {
       </div>
     </div>
 
-    <h3>Linha do tempo de status</h3>
-    <div id="statusTimelineList" class="history"><div class="empty-state">Carregando linha do tempo...</div></div>
-
-    <h3>Histórico</h3>
-    <div id="historyList" class="history"><div class="empty-state">Carregando histórico...</div></div>
+    <h3>Linha do tempo do chamado</h3>
+    <div id="unifiedTimelineList" class="history unified-timeline"><div class="empty-state">Carregando linha do tempo...</div></div>
   `;
 
   if (isOperatorOrAdmin()) {
@@ -1865,7 +2008,7 @@ async function renderTicketDetail(ticket) {
   setupHistoryPasteZone();
   $('addHistoryBtn').addEventListener('click', () => addHistory(ticket));
   if (state.historyLoadedFor !== ticket.id) {
-    await Promise.all([loadHistory(ticket.id), loadStatusTimeline(ticket.id)]);
+    await loadUnifiedTimeline(ticket.id);
     state.historyLoadedFor = ticket.id;
   }
 }
@@ -1942,6 +2085,295 @@ async function loadHistory(ticketId) {
   `).join('');
 }
 
+
+function timelineEventIcon(item) {
+  const type = item?.tipo || item?.tipoEvento || item?.status || '';
+  if (String(type).includes('criacao')) return '＋';
+  if (String(type).includes('reab')) return '↻';
+  if (String(type).includes('trat') || item?.status === 'em_tratamento') return '⏱';
+  if (String(type).includes('final')) return '✓';
+  if (String(type).includes('diverg') || String(type).includes('devolver')) return '!';
+  if (item?.source === 'status') return '•';
+  if (item?.anexo?.url) return '📎';
+  return '✎';
+}
+
+
+function normalizeTimelineHistoryItem(item) {
+  return {
+    ...item,
+    source: 'historico',
+    sortAt: timestampMillis(item.criadoEm),
+    title: historyTypeLabel(item.tipo),
+    cssType: String(item.tipo || 'observacao').replace(/[^a-z0-9_-]/gi, '_')
+  };
+}
+
+function normalizeTimelineStatusItem(item) {
+  return {
+    ...item,
+    source: 'status',
+    sortAt: timestampMillis(item.criadoEm),
+    title: timelineEventLabel(item),
+    cssType: String(item.status || item.tipoEvento || 'status').replace(/[^a-z0-9_-]/gi, '_')
+  };
+}
+
+function timelineSameUser(a, b) {
+  const aId = a?.usuarioId || a?.operadorId || '';
+  const bId = b?.usuarioId || b?.operadorId || '';
+  if (aId && bId && aId === bId) return true;
+
+  const aName = normalizeKey(a?.usuarioNome || a?.operadorNome || a?.usuarioEmail || a?.operadorEmail || '').toLowerCase();
+  const bName = normalizeKey(b?.usuarioNome || b?.operadorNome || b?.usuarioEmail || b?.operadorEmail || '').toLowerCase();
+  return Boolean(aName && bName && aName === bName);
+}
+
+function timelineSameText(a, b) {
+  const aText = normalizeKey(a?.texto || '').toLowerCase();
+  const bText = normalizeKey(b?.texto || '').toLowerCase();
+  if (!aText || !bText) return false;
+  return aText === bText || aText.includes(bText) || bText.includes(aText);
+}
+
+function shouldMergeStatusIntoHistory(history, status) {
+  if (!history || !status) return false;
+  const diff = Math.abs((history.sortAt || 0) - (status.sortAt || 0));
+  if (diff > 120000) return false;
+  if (timelineSameText(history, status)) return true;
+  return diff <= 120000 && timelineSameUser(history, status);
+}
+
+function shouldMergeStatusGroup(group, status) {
+  if (!group?.statusEvents?.length || !status) return false;
+  const base = group.statusEvents[0];
+  const diff = Math.abs((group.sortAt || 0) - (status.sortAt || 0));
+  if (diff > 120000) return false;
+  if (timelineSameText(base, status)) return true;
+  return timelineSameUser(base, status) && diff <= 120000;
+}
+
+function createHistoryTimelineGroup(history) {
+  return {
+    id: `historico-${history.id}`,
+    source: 'historico',
+    history,
+    primary: history,
+    statusEvents: [],
+    sortAt: history.sortAt || 0,
+    cssType: history.cssType || 'observacao'
+  };
+}
+
+function createStatusTimelineGroup(status) {
+  return {
+    id: `status-${status.id}`,
+    source: 'status',
+    history: null,
+    primary: status,
+    statusEvents: [status],
+    sortAt: status.sortAt || 0,
+    cssType: status.cssType || 'status'
+  };
+}
+
+function buildUnifiedTimelineGroups(historyItems, statusItems) {
+  const groups = historyItems.map(createHistoryTimelineGroup);
+  const statusOnlyGroups = [];
+
+  statusItems.forEach((status) => {
+    const historyGroup = groups.find((group) => shouldMergeStatusIntoHistory(group.history, status));
+    if (historyGroup) {
+      historyGroup.statusEvents.push(status);
+      historyGroup.sortAt = Math.max(historyGroup.sortAt || 0, status.sortAt || 0);
+      if (status.status) historyGroup.lastStatus = status.status;
+      return;
+    }
+
+    const existingStatusGroup = statusOnlyGroups.find((group) => shouldMergeStatusGroup(group, status));
+    if (existingStatusGroup) {
+      existingStatusGroup.statusEvents.push(status);
+      existingStatusGroup.sortAt = Math.max(existingStatusGroup.sortAt || 0, status.sortAt || 0);
+      existingStatusGroup.lastStatus = status.status || existingStatusGroup.lastStatus;
+      return;
+    }
+
+    statusOnlyGroups.push(createStatusTimelineGroup(status));
+  });
+
+  return [...groups, ...statusOnlyGroups]
+    .filter((group) => group.sortAt || group.primary?.criadoEm)
+    .sort((a, b) => (b.sortAt || 0) - (a.sortAt || 0));
+}
+
+function timelineGroupTitle(group) {
+  const history = group.history;
+  const statuses = group.statusEvents || [];
+  const hasTreatment = statuses.some((item) => item.status === 'em_tratamento' || item.statusNovo === 'em_tratamento');
+  const hasReopen = statuses.some((item) => item.status === 'reaberto' || item.statusNovo === 'reaberto');
+  const hasFinal = statuses.some((item) => item.status === 'finalizado' || item.statusNovo === 'finalizado');
+  const text = normalizeKey(history?.texto || statuses.map((item) => item.texto || '').find(Boolean) || '').toLowerCase();
+
+  if (history?.tipo === 'criacao') return 'Criação do chamado';
+  if (hasTreatment && text.includes('reservado')) return 'Reserva do chamado';
+  if (hasTreatment && history) return 'Tratativa / Em tratamento';
+  if (hasReopen && history) return 'Reabertura do chamado';
+  if (hasFinal && history) return 'Finalização do chamado';
+  if (history) return history.title || historyTypeLabel(history.tipo);
+  if (statuses.length > 1) return 'Mudança de status';
+  return statuses[0]?.title || 'Status';
+}
+
+function timelineGroupBadge(group) {
+  if (group.history) return historyTypeBadge(group.history.tipo);
+  const last = [...(group.statusEvents || [])].sort((a, b) => (b.sortAt || 0) - (a.sortAt || 0))[0];
+  return statusBadge(last?.status || last?.statusNovo || 'aberto');
+}
+
+function timelineGroupIcon(group) {
+  if (group.history?.tipo === 'criacao') return '＋';
+  if ((group.statusEvents || []).some((item) => item.status === 'em_tratamento' || item.statusNovo === 'em_tratamento')) return '⏱';
+  if ((group.statusEvents || []).some((item) => item.status === 'reaberto' || item.statusNovo === 'reaberto')) return '↻';
+  if ((group.statusEvents || []).some((item) => item.status === 'finalizado' || item.statusNovo === 'finalizado')) return '✓';
+  if (group.history) return timelineEventIcon(group.history);
+  return timelineEventIcon(group.primary);
+}
+
+function uniqueStatusEvents(events = []) {
+  const seen = new Set();
+  return [...events]
+    .sort((a, b) => (a.sortAt || 0) - (b.sortAt || 0))
+    .filter((item) => {
+      const key = `${item.tipoEvento || ''}|${item.status || ''}|${item.statusAnterior || ''}|${item.statusNovo || ''}|${item.duracaoMin ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function renderTimelineStatusFlow(group) {
+  const events = uniqueStatusEvents(group.statusEvents || []);
+  if (!events.length) return '';
+
+  return `
+    <div class="timeline-status-flow">
+      ${events.map((item) => `
+        <div class="timeline-status-line">
+          <span>${escapeHtml(timelineEventLabel(item))}</span>
+          ${item.contabilizaTempo && item.duracaoMin != null ? `<small>Tempo no status: ${escapeHtml(formatMinutes(Number(item.duracaoMin)))}</small>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderUnifiedTimelineGroup(group) {
+  const history = group.history;
+  const user = history?.usuarioNome || history?.usuarioEmail || group.primary?.usuarioNome || group.primary?.usuarioEmail || 'Sistema';
+  const text = history
+    ? renderTextContent(history.texto || '')
+    : (() => {
+        const statusText = uniqueStatusEvents(group.statusEvents || []).map((item) => normalizeKey(item.texto || '')).find(Boolean);
+        return statusText ? `<div class="history-text">${escapeHtml(statusText)}</div>` : '';
+      })();
+  const anexo = history?.anexo || null;
+  const sourceClass = history ? 'historico' : 'status';
+  const cssType = history?.cssType || group.cssType || 'status';
+
+  return `
+    <div class="timeline-item timeline-${escapeHtml(sourceClass)} timeline-type-${escapeHtml(cssType)}">
+      <div class="timeline-marker">${escapeHtml(timelineGroupIcon(group))}</div>
+      <div class="timeline-card timeline-card-grouped">
+        <div class="history-item-head timeline-head">
+          <div>
+            <strong>${escapeHtml(timelineGroupTitle(group))}</strong>
+            <small>${escapeHtml(user)}</small>
+          </div>
+          ${timelineGroupBadge(group)}
+        </div>
+        ${text}
+        ${renderTimelineStatusFlow(group)}
+        ${anexo?.url ? `<a class="attachment-link" href="${escapeHtml(anexo.url)}" target="_blank" rel="noopener">Abrir anexo: ${escapeHtml(anexo.nome || 'arquivo')}</a>` : ''}
+        <small class="timeline-date">${formatDate(group.primary?.criadoEm || history?.criadoEm)}</small>
+      </div>
+    </div>
+  `;
+}
+
+function findOpeningHistoryItem(historyItems = []) {
+  const ordered = [...historyItems].sort((a, b) => (a.sortAt || 0) - (b.sortAt || 0));
+  return ordered.find((item) => item.tipo === 'criacao' && normalizeKey(item.texto || ''))
+    || ordered.find((item) => normalizeKey(item.texto || ''))
+    || null;
+}
+
+
+function renderOpeningSummary(opening) {
+  const box = $('openingSummaryBox');
+  if (!box) return;
+
+  if (!opening) {
+    box.className = 'opening-summary opening-summary-v30 opening-summary-empty';
+    box.innerHTML = `
+      <div class="opening-summary-head">
+        <strong>Ocorrência inicial</strong>
+      </div>
+      <div class="opening-summary-body muted">Sem texto de abertura encontrado.</div>
+    `;
+    return;
+  }
+
+  box.className = 'opening-summary opening-summary-v30';
+  box.innerHTML = `
+    <div class="opening-summary-head">
+      <div>
+        <strong>Ocorrência inicial</strong>
+        <small>${escapeHtml(opening.usuarioNome || opening.usuarioEmail || 'Sistema')} • ${formatDate(opening.criadoEm)}</small>
+      </div>
+    </div>
+    <div class="opening-summary-body">
+      ${renderTextContent(opening.texto || '')}
+      ${opening.anexo?.url ? `<a class="attachment-link" href="${escapeHtml(opening.anexo.url)}" target="_blank" rel="noopener">Abrir anexo: ${escapeHtml(opening.anexo.nome || 'arquivo')}</a>` : ''}
+    </div>
+  `;
+}
+
+async function loadUnifiedTimeline(ticketId) {
+  const timelineList = $('unifiedTimelineList');
+  if (!timelineList) return;
+
+  try {
+    const [historySnapshot, statusSnapshot] = await Promise.all([
+      getDocs(query(collection(db, 'chamados', ticketId, 'historico'), orderBy('criadoEm', 'asc'), limit(HISTORY_LIMIT))),
+      getDocs(query(collection(db, 'chamados', ticketId, 'status_eventos'), orderBy('criadoEm', 'asc'), limit(HISTORY_LIMIT))).catch((error) => {
+        console.warn('Não foi possível carregar status_eventos:', error);
+        return null;
+      })
+    ]);
+
+    const historyItems = historySnapshot.docs.map((d) => normalizeTimelineHistoryItem({ id: d.id, ...d.data() }));
+    const statusItems = statusSnapshot ? statusSnapshot.docs.map((d) => normalizeTimelineStatusItem({ id: d.id, ...d.data() })) : [];
+    const groups = buildUnifiedTimelineGroups(historyItems, statusItems);
+    const openingItem = findOpeningHistoryItem(historyItems);
+    const timelineGroups = openingItem
+      ? groups.filter((group) => group.history?.id !== openingItem.id)
+      : groups;
+
+    renderOpeningSummary(openingItem);
+
+    if (!timelineGroups.length) {
+      timelineList.innerHTML = '<div class="empty-state">Nenhuma outra movimentação registrada ainda.</div>';
+      return;
+    }
+
+    timelineList.innerHTML = timelineGroups.map(renderUnifiedTimelineGroup).join('');
+  } catch (error) {
+    console.warn('Não foi possível carregar a linha do tempo unificada:', error);
+    renderOpeningSummary(null);
+    timelineList.innerHTML = '<div class="empty-state">Não consegui carregar a linha do tempo. Confira a conexão e as permissões.</div>';
+  }
+}
+
 function historyTypeForStatusChange(status) {
   if (status === 'em_tratamento') return 'tratativa';
   if (status === 'reaberto') return 'reabertura';
@@ -2010,7 +2442,7 @@ async function addHistory(ticket) {
     textarea.value = '';
     clearHistoryAttachment();
     state.historyLoadedFor = null;
-    await Promise.all([loadHistory(ticketId), loadStatusTimeline(ticketId)]);
+    await loadUnifiedTimeline(ticketId);
     state.historyLoadedFor = ticketId;
 
     const finalWarning = [warning, eventWarning].filter(Boolean).join(' ');
@@ -2140,7 +2572,7 @@ async function reopenTicket(ticket, texto = 'Chamado reaberto.') {
   await tryCommitOperatorEvent(ticket, 'reaberto', texto);
 
   state.historyLoadedFor = null;
-  await Promise.all([loadHistory(ticket.id), loadStatusTimeline(ticket.id)]).catch(() => {});
+  await loadUnifiedTimeline(ticket.id).catch(() => {});
   showToast('Chamado reaberto.', 'success');
 }
 
@@ -2166,7 +2598,7 @@ async function updateTicketStatus(ticket, status, customText = '') {
   await tryCommitOperatorEvent(ticket, status, texto);
 
   state.historyLoadedFor = null;
-  await Promise.all([loadHistory(ticket.id), loadStatusTimeline(ticket.id)]).catch(() => {});
+  await loadUnifiedTimeline(ticket.id).catch(() => {});
   showToast(status === 'em_tratamento' ? 'Chamado reservado para você.' : 'Status atualizado.', 'success');
 }
 
@@ -2433,6 +2865,7 @@ function renderApp() {
   els.userLine.textContent = `${profile.nome || state.user.email} • ${roleLabel(profile.papel)} • ${profile.organizacaoNome || 'Todas as organizações'}`;
   els.adminBtn.classList.toggle('hidden', !isAdmin());
   els.adminQueryActiveBtn?.classList.toggle('hidden', !isAdmin());
+  if (els.adminQueryActiveBtn) els.adminQueryActiveBtn.textContent = 'Consultar por filtros';
   els.adminClearQueryBtn?.classList.toggle('hidden', !isAdmin());
   els.adminPanel?.classList.toggle('hidden', true);
   els.orgFilterWrap.classList.toggle('hidden', !isOperatorOrAdmin());
@@ -2554,46 +2987,70 @@ function operatorReportName(uid, name, email) {
   return user?.nome || user?.email || email || 'Sem operador';
 }
 
-async function fetchAdminActiveTickets() {
+function currentAdminQueryStatuses() {
+  const selectedStatus = els.statusFilter?.value || 'ativos';
+  if (selectedStatus === 'ativos') return ACTIVE_STATUSES;
+  if (selectedStatus === 'todos') return ALL_TICKET_STATUSES;
+  return [selectedStatus];
+}
+
+function adminQueryDescription(statuses) {
+  if (!statuses?.length) return 'filtros';
+  if (statuses.length === ACTIVE_STATUSES.length && ACTIVE_STATUSES.every((status) => statuses.includes(status))) return 'fila ativa';
+  if (statuses.length === ALL_TICKET_STATUSES.length) return 'todos os status';
+  return statuses.map((status) => STATUS_LABELS[status] || status).join(', ');
+}
+
+async function fetchAdminTicketsByStatuses(statuses = ACTIVE_STATUSES, perStatusLimit = ADMIN_ACTIVE_QUERY_LIMIT_PER_STATUS) {
   if (!isAdmin()) return [];
   const chamadosRef = collection(db, 'chamados');
   const found = new Map();
 
-  for (const status of ACTIVE_STATUSES) {
+  for (const status of statuses) {
     const snapshot = await getDocs(query(
       chamadosRef,
       where('status', '==', status),
-      limit(ADMIN_ACTIVE_QUERY_LIMIT_PER_STATUS)
+      limit(perStatusLimit)
     ));
     snapshot.docs.forEach((d) => found.set(d.id, { id: d.id, ...d.data() }));
   }
 
-  return [...found.values()].sort((a, b) => timestampMillis(b.atualizadoEm) - timestampMillis(a.atualizadoEm));
+  return sortTicketsForDisplay([...found.values()]);
+}
+
+async function fetchAdminActiveTickets() {
+  return fetchAdminTicketsByStatuses(ACTIVE_STATUSES, ADMIN_ACTIVE_QUERY_LIMIT_PER_STATUS);
+}
+
+async function fetchAdminFilteredTickets() {
+  return fetchAdminTicketsByStatuses(currentAdminQueryStatuses(), ADMIN_FILTERED_QUERY_LIMIT_PER_STATUS);
 }
 
 async function adminQueryActiveTickets() {
   if (!isAdmin()) return;
   const btn = els.adminQueryActiveBtn;
+  const statuses = currentAdminQueryStatuses();
+  const description = adminQueryDescription(statuses);
   if (btn) {
     btn.disabled = true;
     btn.textContent = 'Consultando...';
   }
-  setText(els.liveStatus, 'Consultando ativos...');
+  setText(els.liveStatus, `Consultando ${description}...`);
 
   try {
-    const tickets = await fetchAdminActiveTickets();
-    state.ticketBuckets = { admin_consulta_ativos: tickets };
+    const tickets = await fetchAdminFilteredTickets();
+    state.ticketBuckets = { admin_consulta_filtros: tickets };
     mergeTicketBuckets();
-    setText(els.liveStatus, `Consulta admin: ${tickets.length} ativo(s)`);
-    showToast(`${tickets.length} chamado(s) ativo(s) carregado(s) para o admin.`, 'success');
+    setText(els.liveStatus, `Consulta admin: ${tickets.length} chamado(s) • ${description}`);
+    showToast(`${tickets.length} chamado(s) carregado(s) para o admin (${description}).`, 'success');
   } catch (error) {
     console.error('Erro na consulta admin:', error);
     setText(els.liveStatus, 'Erro na consulta admin');
-    showToast(`Erro ao consultar ativos: ${error.message}`, 'error');
+    showToast(`Erro ao consultar chamados: ${error.message}`, 'error');
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = 'Consultar ativos';
+      btn.textContent = 'Consultar por filtros';
     }
   }
 }
@@ -2605,7 +3062,7 @@ function adminClearManualQuery() {
   state.selectedTicketId = null;
   renderTickets();
   renderTicketDetail(null);
-  setText(els.liveStatus, 'Admin: consulta manual');
+  setText(els.liveStatus, 'Admin: consulta manual econômica');
 }
 
 function rowSlaLimit(ticket, settings) {

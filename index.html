@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 
-<body>
+<body class="xabuia-v30">
   <div id="toast" class="toast hidden"></div>
 
   <main id="authView" class="auth-shell hidden">
@@ -115,7 +115,7 @@
 
       <div class="top-actions">
         <button id="newTicketBtn" class="btn primary" type="button">Novo chamado</button>
-        <button id="adminQueryActiveBtn" class="btn primary hidden" type="button">Consultar ativos</button>
+        <button id="adminQueryActiveBtn" class="btn primary hidden" type="button">Consultar por filtros</button>
         <button id="adminClearQueryBtn" class="btn ghost hidden" type="button">Limpar consulta</button>
         <button id="adminBtn" class="btn ghost hidden" type="button">Admin</button>
         <button id="logoutBtn" class="btn ghost" type="button">Sair</button>
@@ -203,21 +203,86 @@
       <article class="metric card"><span>Total visível</span><strong id="countTotal">0</strong></article>
     </section>
 
-    <section class="content-grid">
-      <section class="card ticket-list-card">
-        <div class="section-head">
-          <h2>Chamados</h2>
+    <section class="content-grid content-grid-v30">
+      <section class="card ticket-list-card queue-panel">
+        <div class="section-head queue-head">
+          <div>
+            <h2>Fila de chamados</h2>
+          </div>
           <span id="liveStatus" class="pill">Carregando...</span>
         </div>
-        <div id="ticketList" class="ticket-list"></div>
+
+        <div id="ticketList" class="ticket-list ticket-list-v30" aria-live="polite"></div>
       </section>
 
-      <aside id="ticketDetail" class="card detail-card empty">
+      <aside id="ticketDetail" class="card detail-card detail-card-v30 empty">
         <h2>Selecione um chamado</h2>
-        <p class="muted">Clique em um chamado para ver o histórico e adicionar novas observações.</p>
+        <p class="muted">Clique em um chamado para ver a nota, a ocorrência inicial e adicionar novas observações.</p>
       </aside>
     </section>
   </main>
+
+  <!--
+    Modelo visual pensado para a próxima etapa do app.js.
+    O app atual ainda renderiza os cards via JavaScript, mas estes nomes de classes
+    já deixam claro o desenho que vamos aplicar no styles.css e no app.js:
+    - título do formulário preso na borda do card;
+    - NF + CNPJ no topo;
+    - chave completa embaixo;
+    - organização, criado por, tratando e tempo na fila próximos.
+  -->
+  <template id="ticketCardVisualModel">
+    <article class="ticket-item ticket-item-v30 ticket-framed">
+      <div class="ticket-type-legend" data-slot="tipoChamado">Nota fiscal • Caminhão na porta</div>
+
+      <div class="ticket-card-main">
+        <strong class="ticket-card-title">
+          NF: <span data-slot="numeroNota">4548218</span>
+          <span class="ticket-title-separator">•</span>
+          CNPJ: <span data-slot="cnpj">03630560000118</span>
+        </strong>
+
+        <div class="ticket-access-key" data-slot="chaveCompleta">
+          35260603630560000118550010045482181778674606
+        </div>
+      </div>
+
+      <div class="ticket-card-footer">
+        <span class="org-chip" data-slot="organizacao">Uni-X</span>
+        <span>Criado por: <strong data-slot="criadoPor">Elias Araújo</strong></span>
+        <span>Tratando: <strong data-slot="tratando">Elias Araújo</strong></span>
+        <span class="queue-time">Na fila há <strong data-slot="tempoFila">22min</strong></span>
+      </div>
+    </article>
+  </template>
+
+  <template id="ticketDetailVisualModel">
+    <article class="detail-summary-card detail-summary-v30 ticket-framed">
+      <div class="ticket-type-legend" data-slot="tipoChamado">Nota fiscal • Caminhão na porta</div>
+
+      <div class="detail-summary-grid">
+        <div class="detail-summary-main">
+          <div class="nf-facts-grid">
+            <span><strong>NF</strong> <span data-slot="numeroNota">4548218</span></span>
+            <span><strong>CNPJ</strong> <span data-slot="cnpj">03630560000118</span></span>
+            <span><strong>Série</strong> <span data-slot="serie">001</span></span>
+            <span><strong>Modelo</strong> <span data-slot="modelo">55</span></span>
+          </div>
+
+          <div class="full-key-block">
+            <strong>Chave:</strong>
+            <span data-slot="chaveCompleta">35260603630560000118550010045482181778674606</span>
+          </div>
+        </div>
+
+        <div class="opening-occurrence-card">
+          <strong>Ocorrência inicial</strong>
+          <small data-slot="aberturaMeta">Elias Araújo • 30/06/2026, 22:30</small>
+          <div class="opening-occurrence-text" data-slot="textoAbertura">teste</div>
+        </div>
+      </div>
+    </article>
+  </template>
 
   <dialog id="ticketTypeDialog" class="modal wide">
     <div class="modal-card">
@@ -268,7 +333,6 @@
             </button>
           </div>
         </section>
-
       </div>
 
       <div class="modal-actions">
@@ -439,6 +503,6 @@
   </dialog>
 
   <script type="module" src="./app.js"></script>
-<script src="./xabuia-title-alertas.js"></script>
+  <script src="./xabuia-title-alertas.js"></script>
 </body>
 </html>
