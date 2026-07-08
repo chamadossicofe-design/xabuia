@@ -222,39 +222,6 @@
     </section>
   </main>
 
-  <!--
-    Modelo visual pensado para a próxima etapa do app.js.
-    O app atual ainda renderiza os cards via JavaScript, mas estes nomes de classes
-    já deixam claro o desenho que vamos aplicar no styles.css e no app.js:
-    - título do formulário preso na borda do card;
-    - NF + CNPJ no topo;
-    - chave completa embaixo;
-    - organização, criado por, tratando e tempo na fila próximos.
-  -->
-  <template id="ticketCardVisualModel">
-    <article class="ticket-item ticket-item-v30 ticket-framed">
-      <div class="ticket-type-legend" data-slot="tipoChamado">Nota fiscal • Caminhão na porta</div>
-
-      <div class="ticket-card-main">
-        <strong class="ticket-card-title">
-          NF: <span data-slot="numeroNota">4548218</span>
-          <span class="ticket-title-separator">•</span>
-          CNPJ: <span data-slot="cnpj">03630560000118</span>
-        </strong>
-
-        <div class="ticket-access-key" data-slot="chaveCompleta">
-          35260603630560000118550010045482181778674606
-        </div>
-      </div>
-
-      <div class="ticket-card-footer">
-        <span class="org-chip" data-slot="organizacao">Uni-X</span>
-        <span>Criado por: <strong data-slot="criadoPor">Elias Araújo</strong></span>
-        <span>Tratando: <strong data-slot="tratando">Elias Araújo</strong></span>
-        <span class="queue-time">Na fila há <strong data-slot="tempoFila">22min</strong></span>
-      </div>
-    </article>
-  </template>
 
   <template id="ticketDetailVisualModel">
     <article class="detail-summary-card detail-summary-v30 ticket-framed">
@@ -374,7 +341,7 @@
 
       <div class="field">
         <span>Anexo</span>
-        <input id="ticketFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx" />
+        <input id="ticketFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xml,.xlsx,.xls" />
         <div id="ticketPasteZone" class="paste-zone" tabindex="0" role="button" aria-label="Adicionar anexo">
           <div class="paste-empty">
             <strong>Cole uma imagem aqui com Ctrl+V</strong>
@@ -421,7 +388,7 @@
 
       <div class="field">
         <span>Print ou anexo</span>
-        <input id="productFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx" />
+        <input id="productFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xml,.xlsx,.xls" />
         <div id="productPasteZone" class="paste-zone" tabindex="0" role="button" aria-label="Adicionar anexo">
           <div class="paste-empty">
             <strong>Cole uma imagem aqui com Ctrl+V</strong>
