@@ -2609,3 +2609,583 @@ button { cursor: pointer; }
     white-space: normal;
   }
 }
+
+/* =========================================================
+   XABUIA V33 • Compacto refinado
+   Ajuste final de tamanho sem mexer no JavaScript.
+   Cole no final do styles.css, ou use este arquivo completo.
+   ========================================================= */
+
+body.xabuia-v30 {
+  font-size: 14px;
+}
+
+body.xabuia-v30 .app {
+  padding: 18px clamp(16px, 1.7vw, 26px);
+}
+
+/* Topo mais leve */
+body.xabuia-v30 .topbar {
+  margin-bottom: 14px;
+  gap: 12px;
+}
+
+body.xabuia-v30 .brand {
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+body.xabuia-v30 .brand.inline {
+  margin-bottom: 0;
+}
+
+body.xabuia-v30 .brand-logo,
+body.xabuia-v30 .brand-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+}
+
+body.xabuia-v30 .brand h1 {
+  font-size: 1.35rem;
+  line-height: 1.05;
+}
+
+body.xabuia-v30 .brand p,
+body.xabuia-v30 #userLine {
+  margin-top: 3px;
+  font-size: .84rem;
+  line-height: 1.25;
+}
+
+body.xabuia-v30 .top-actions {
+  gap: 8px;
+}
+
+/* Botões menores, sem perder presença */
+body.xabuia-v30 .btn {
+  min-height: 36px;
+  padding: 8px 13px;
+  border-radius: 11px;
+  font-size: .88rem;
+  gap: 7px;
+}
+
+body.xabuia-v30 .top-actions .btn {
+  min-height: 40px;
+  padding: 9px 14px;
+  border-radius: 12px;
+}
+
+body.xabuia-v30 .top-actions .btn.primary {
+  min-width: 132px;
+}
+
+body.xabuia-v30 .top-actions #adminBtn,
+body.xabuia-v30 .top-actions #logoutBtn,
+body.xabuia-v30 .top-actions #adminClearQueryBtn {
+  min-width: 78px;
+}
+
+body.xabuia-v30 .compact-add {
+  min-width: 92px;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+/* Filtros mais baixos e alinhados */
+body.xabuia-v30 .toolbar,
+body.xabuia-v30 .toolbar.toolbar-v12,
+body.xabuia-v30 .toolbar-v12 {
+  padding: 13px 16px;
+  gap: 10px;
+  margin-bottom: 14px;
+  border-radius: 18px;
+}
+
+body.xabuia-v30 .field {
+  gap: 5px;
+}
+
+body.xabuia-v30 .field span {
+  font-size: .76rem;
+  line-height: 1.1;
+}
+
+body.xabuia-v30 .toolbar .field input,
+body.xabuia-v30 .toolbar .field select,
+body.xabuia-v30 .toolbar .multi-dropdown summary,
+body.xabuia-v30 .toolbar-v12 .field input,
+body.xabuia-v30 .toolbar-v12 .field select,
+body.xabuia-v30 .toolbar-v12 .multi-dropdown summary {
+  min-height: 40px;
+  height: 40px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  font-size: .88rem;
+}
+
+body.xabuia-v30 .multi-dropdown summary {
+  padding-right: 34px;
+}
+
+/* Contadores: agora deixam de parecer garrafão kkk */
+body.xabuia-v30 .summary-grid {
+  grid-template-columns: repeat(7, minmax(104px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+body.xabuia-v30 .metric.card,
+body.xabuia-v30 .metric {
+  min-height: 54px;
+  padding: 9px 12px;
+  border-radius: 15px;
+  align-content: center;
+}
+
+body.xabuia-v30 .metric span {
+  min-height: 0;
+  margin: 0;
+  font-size: .72rem;
+  line-height: 1.15;
+  letter-spacing: -.01em;
+}
+
+body.xabuia-v30 .metric strong {
+  margin-top: 4px;
+  font-size: clamp(1.35rem, 1.6vw, 1.62rem);
+  line-height: .95;
+  letter-spacing: -.03em;
+}
+
+/* Cards principais mais compactos */
+body.xabuia-v30 .content-grid,
+body.xabuia-v30 .content-grid-v30 {
+  gap: 14px;
+  grid-template-columns: minmax(370px, 43fr) minmax(500px, 57fr);
+}
+
+body.xabuia-v30 .card {
+  padding: 15px;
+  border-radius: 17px;
+}
+
+body.xabuia-v30 .ticket-list-card,
+body.xabuia-v30 .queue-panel,
+body.xabuia-v30 .detail-card,
+body.xabuia-v30 .detail-card-v30 {
+  padding: 14px;
+}
+
+body.xabuia-v30 .section-head,
+body.xabuia-v30 .queue-head {
+  margin-bottom: 12px;
+}
+
+body.xabuia-v30 .section-head h2,
+body.xabuia-v30 .queue-head h2 {
+  font-size: 1.45rem;
+  line-height: 1.1;
+}
+
+body.xabuia-v30 .pill {
+  min-height: 24px;
+  padding: 4px 9px;
+  font-size: .72rem;
+}
+
+/* Fila de chamados */
+body.xabuia-v30 .ticket-list {
+  gap: 9px;
+}
+
+body.xabuia-v30 .ticket-item,
+body.xabuia-v30 .ticket-item.ticket-framed {
+  padding: 16px 12px 11px 12px;
+  margin-top: 7px;
+  gap: 8px;
+  border-radius: 16px;
+}
+
+body.xabuia-v30 .ticket-type-legend,
+body.xabuia-v30 .ticket-item .ticket-type-legend,
+body.xabuia-v30 .detail-card .ticket-type-legend {
+  top: -10px;
+  left: 14px;
+  padding: 3px 9px;
+  font-size: .62rem;
+}
+
+body.xabuia-v30 .ticket-card-title-v30,
+body.xabuia-v30 .ticket-card-title,
+body.xabuia-v30 .ticket-item .ticket-key {
+  font-size: .92rem;
+  line-height: 1.22;
+}
+
+body.xabuia-v30 .ticket-access-key-v30,
+body.xabuia-v30 .ticket-access-key,
+body.xabuia-v30 .ticket-item.ticket-framed .ticket-raw-key {
+  padding: 5px 8px;
+  font-size: .68rem;
+  border-radius: 9px;
+}
+
+body.xabuia-v30 .ticket-card-footer-v30,
+body.xabuia-v30 .ticket-card-footer,
+body.xabuia-v30 .ticket-item.ticket-framed .ticket-meta {
+  gap: 6px 7px;
+  font-size: .72rem;
+}
+
+body.xabuia-v30 .org-chip,
+body.xabuia-v30 .ticket-item.ticket-framed .org-chip,
+body.xabuia-v30 .operator-chip,
+body.xabuia-v30 .queue-age,
+body.xabuia-v30 .created-by-chip,
+body.xabuia-v30 .ticket-person-chip {
+  min-height: 22px;
+  padding: 3px 8px;
+  font-size: .7rem;
+}
+
+body.xabuia-v30 .status,
+body.xabuia-v30 .ticket-item.ticket-framed .status,
+body.xabuia-v30 .detail-card .status {
+  padding: 4px 8px;
+  font-size: .68rem;
+}
+
+body.xabuia-v30 .reserve-ticket-btn,
+body.xabuia-v30 .ticket-item.ticket-framed .reserve-ticket-btn {
+  min-height: 26px;
+  padding: 4px 9px;
+  font-size: .68rem;
+}
+
+/* Detalhe do chamado */
+body.xabuia-v30 .detail-card:not(.empty) {
+  padding: 5px;
+}
+
+body.xabuia-v30 .detail-summary-panel,
+body.xabuia-v30 .detail-summary-panel-v30,
+body.xabuia-v30 .detail-card .detail-summary-panel {
+  padding: 13px 9px 6px;
+  margin-bottom: 12px;
+  border-radius: 20px;
+}
+
+body.xabuia-v30 .detail-frame-grid-v30,
+body.xabuia-v30 .detail-work-card,
+body.xabuia-v30 .detail-summary-content.detail-summary-content-merged {
+  gap: 10px;
+}
+
+body.xabuia-v30 .detail-facts-card-v30,
+body.xabuia-v30 .detail-nfe-card-v30,
+body.xabuia-v30 .compact-ticket-info,
+body.xabuia-v30 .opening-summary-card-v30,
+body.xabuia-v30 .opening-summary.opening-summary-compact {
+  padding: 10px 11px;
+  border-radius: 14px;
+}
+
+body.xabuia-v30 .detail-facts-line-v30 {
+  gap: 8px 12px;
+  font-size: .82rem;
+}
+
+body.xabuia-v30 .detail-full-key-inline code,
+body.xabuia-v30 .full-key-block span,
+body.xabuia-v30 .compact-access-key code {
+  padding: 5px 8px;
+  font-size: .72rem;
+  border-radius: 9px;
+}
+
+body.xabuia-v30 .opening-summary-v30 .opening-summary-head {
+  margin-bottom: 6px;
+}
+
+body.xabuia-v30 .opening-summary-v30 .opening-summary-head strong {
+  font-size: .86rem;
+}
+
+body.xabuia-v30 .opening-summary-v30 .opening-summary-head small {
+  font-size: .72rem;
+}
+
+body.xabuia-v30 .opening-summary-body,
+body.xabuia-v30 .opening-occurrence-text {
+  padding: 7px 9px;
+  border-radius: 9px;
+}
+
+body.xabuia-v30 .opening-summary-v30 .history-text,
+body.xabuia-v30 .opening-summary-body .history-text,
+body.xabuia-v30 .opening-occurrence-text {
+  font-size: .9rem;
+  line-height: 1.45;
+}
+
+/* Painel de anexos: mais bonito, mais compacto e separado */
+body.xabuia-v30 .ticket-attachments-panel {
+  margin: 10px 0 12px !important;
+  padding: 11px !important;
+  border: 1px solid #d8e5f5 !important;
+  border-radius: 16px !important;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%) !important;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, .045) !important;
+}
+
+body.xabuia-v30 .ticket-attachments-head {
+  margin-bottom: 9px !important;
+  gap: 10px !important;
+}
+
+body.xabuia-v30 .ticket-attachments-head strong {
+  font-size: .95rem !important;
+  line-height: 1.1 !important;
+}
+
+body.xabuia-v30 .ticket-attachments-head small {
+  font-size: .72rem !important;
+  line-height: 1.25 !important;
+}
+
+body.xabuia-v30 .ticket-attachments-badge {
+  min-width: 28px !important;
+  height: 28px !important;
+  padding: 0 8px !important;
+  font-size: .78rem !important;
+  border-radius: 999px !important;
+  background: #eaf2ff !important;
+}
+
+body.xabuia-v30 .ticket-attachments-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) !important;
+  gap: 8px !important;
+}
+
+body.xabuia-v30 .ticket-attachment-card {
+  gap: 8px !important;
+  padding: 8px 9px !important;
+  border-radius: 13px !important;
+  border-color: #e1eaf6 !important;
+  background: #fbfdff !important;
+}
+
+body.xabuia-v30 .ticket-attachment-icon {
+  width: 34px !important;
+  height: 34px !important;
+  flex: 0 0 34px !important;
+  border-radius: 10px !important;
+  font-size: .64rem !important;
+}
+
+body.xabuia-v30 .ticket-attachment-name {
+  font-size: .82rem !important;
+  line-height: 1.25 !important;
+}
+
+body.xabuia-v30 .ticket-attachment-meta {
+  margin-top: 3px !important;
+  font-size: .68rem !important;
+  line-height: 1.35 !important;
+}
+
+body.xabuia-v30 .ticket-attachment-actions {
+  margin-top: 6px !important;
+}
+
+body.xabuia-v30 .ticket-attachment-actions a,
+body.xabuia-v30 .attachment-link {
+  font-size: .8rem;
+}
+
+body.xabuia-v30 .ticket-attachments-more {
+  margin-top: 8px !important;
+  font-size: .7rem !important;
+}
+
+/* Nova ocorrência e área de upload */
+body.xabuia-v30 .occurrence-panel {
+  padding: 12px;
+  gap: 9px;
+  border-radius: 16px;
+}
+
+body.xabuia-v30 .occurrence-textarea span {
+  font-size: .82rem;
+}
+
+body.xabuia-v30 .occurrence-textarea textarea,
+body.xabuia-v30 #newHistoryText {
+  min-height: 104px;
+  padding: 10px 11px;
+  border-radius: 12px;
+  font-size: .9rem;
+  line-height: 1.5;
+  font-weight: 650;
+}
+
+body.xabuia-v30 .paste-zone {
+  min-height: 92px;
+  padding: 11px;
+  border-radius: 13px;
+}
+
+body.xabuia-v30 .paste-zone-small {
+  min-height: 68px;
+  padding: 9px;
+}
+
+body.xabuia-v30 .paste-empty {
+  gap: 3px;
+}
+
+body.xabuia-v30 .paste-empty strong {
+  font-size: .86rem;
+}
+
+body.xabuia-v30 .paste-empty small {
+  font-size: .72rem;
+}
+
+body.xabuia-v30 .paste-preview {
+  gap: 9px;
+  font-size: .78rem;
+}
+
+body.xabuia-v30 .paste-preview img,
+body.xabuia-v30 .paste-zone-small .paste-preview img {
+  max-width: 112px;
+  max-height: 68px;
+  border-radius: 9px;
+}
+
+body.xabuia-v30 .attachment-preview-list {
+  margin: 5px 0 0;
+  padding-left: 18px;
+  text-align: left;
+  font-size: .72rem;
+  line-height: 1.35;
+}
+
+/* Linha do tempo mais enxuta */
+body.xabuia-v30 .unified-timeline,
+body.xabuia-v30 .history {
+  max-height: 470px;
+  gap: 8px;
+}
+
+body.xabuia-v30 .timeline-item {
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+body.xabuia-v30 .timeline-marker {
+  width: 28px;
+  height: 28px;
+  font-size: .72rem;
+}
+
+body.xabuia-v30 .timeline-item::before {
+  left: 14px;
+  top: 28px;
+}
+
+body.xabuia-v30 .timeline-card,
+body.xabuia-v30 .history-item {
+  padding: 8px 10px;
+  border-radius: 12px;
+  gap: 6px;
+}
+
+body.xabuia-v30 .timeline-card .history-text,
+body.xabuia-v30 .history-text {
+  font-size: .84rem;
+  line-height: 1.45;
+}
+
+body.xabuia-v30 .history-item-head {
+  gap: 8px;
+}
+
+body.xabuia-v30 .history-type {
+  font-size: .62rem;
+  padding: 3px 6px;
+}
+
+/* Modais */
+body.xabuia-v30 .modal-card {
+  padding: 18px;
+  gap: 12px;
+  border-radius: 18px;
+}
+
+body.xabuia-v30 .ticket-type-grid {
+  gap: 10px;
+}
+
+body.xabuia-v30 .ticket-type-card {
+  min-height: 92px;
+  padding: 13px;
+  border-radius: 14px;
+}
+
+body.xabuia-v30 .ticket-type-card strong {
+  font-size: .9rem;
+}
+
+body.xabuia-v30 .ticket-type-card span {
+  font-size: .78rem;
+}
+
+/* Responsivo refinado */
+@media (max-width: 1360px) {
+  body.xabuia-v30 .summary-grid {
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  }
+}
+
+@media (max-width: 1120px) {
+  body.xabuia-v30 .content-grid,
+  body.xabuia-v30 .content-grid-v30 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  body.xabuia-v30 .app {
+    padding: 14px 12px;
+  }
+
+  body.xabuia-v30 .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.xabuia-v30 .metric.card,
+  body.xabuia-v30 .metric {
+    min-height: 50px;
+  }
+
+  body.xabuia-v30 .top-actions .btn,
+  body.xabuia-v30 .btn {
+    width: auto;
+  }
+}
+
+@media (max-width: 520px) {
+  body.xabuia-v30 .top-actions .btn {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+  }
+
+  body.xabuia-v30 .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
