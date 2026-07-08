@@ -46,7 +46,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V31-storage-multianexo';
+const APP_VERSION = 'V32-anexos-painel';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -99,6 +99,7 @@ const COUNTED_STATUS_VALUES = ['aberto', 'reaberto', 'em_tratamento'];
 const HISTORY_LIMIT = 300;
 const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_ACTION = 5;
+const MAX_ATTACHMENT_PANEL_ITEMS = 24;
 const ATTACHMENT_ACCEPT = 'image/*,.pdf,.txt,.csv,.xml,.xlsx,.xls';
 const ATTACHMENT_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'pdf', 'txt', 'csv', 'xml', 'xls', 'xlsx']);
 const ATTACHMENT_MIME_BY_EXT = {
@@ -1966,7 +1967,9 @@ async function renderTicketDetail(ticket) {
       </div>
     </section>
 
-    ${renderAttachmentLinks(ticket.anexo, 'Abrir último anexo')}
+    <section id="ticketAttachmentsPanel" class="ticket-attachments-panel">
+      <div class="empty-state">Carregando anexos do chamado...</div>
+    </section>
 
     <div class="occurrence-panel">
       ${isOperatorOrAdmin() ? `
@@ -1996,7 +1999,7 @@ async function renderTicketDetail(ticket) {
         <div id="historyPasteZone" class="paste-zone paste-zone-small" tabindex="0" role="button" aria-label="Adicionar anexo na ocorrência">
           <div class="paste-empty">
             <strong>Anexo da ocorrência</strong>
-            <small>Cole um print com Ctrl+V, clique para escolher arquivo ou arraste aqui.</small>
+            <small>Arraste, solte ou clique para anexar. Máximo 5 arquivos por vez.</small>
           </div>
           <div id="historyPastePreview" class="paste-preview hidden"></div>
         </div>
@@ -2309,7 +2312,6 @@ function renderUnifiedTimelineGroup(group) {
         </div>
         ${text}
         ${renderTimelineStatusFlow(group)}
-        ${renderAttachmentLinks(anexo, 'Abrir anexo')}
         <small class="timeline-date">${formatDate(group.primary?.criadoEm || history?.criadoEm)}</small>
       </div>
     </div>
@@ -2349,7 +2351,6 @@ function renderOpeningSummary(opening) {
     </div>
     <div class="opening-summary-body">
       ${renderTextContent(opening.texto || '')}
-      ${renderAttachmentLinks(opening.anexo, 'Abrir anexo')}
     </div>
   `;
 }
@@ -2376,6 +2377,8 @@ async function loadUnifiedTimeline(ticketId) {
       : groups;
 
     renderOpeningSummary(openingItem);
+    const selectedTicket = state.tickets.find((item) => item.id === ticketId) || null;
+    renderTicketAttachmentsPanel(selectedTicket, historyItems);
 
     if (!timelineGroups.length) {
       timelineList.innerHTML = '<div class="empty-state">Nenhuma outra movimentação registrada ainda.</div>';
@@ -2386,6 +2389,7 @@ async function loadUnifiedTimeline(ticketId) {
   } catch (error) {
     console.warn('Não foi possível carregar a linha do tempo unificada:', error);
     renderOpeningSummary(null);
+    renderTicketAttachmentsPanel(state.tickets.find((item) => item.id === ticketId) || null, []);
     timelineList.innerHTML = '<div class="empty-state">Não consegui carregar a linha do tempo. Confira a conexão e as permissões.</div>';
   }
 }
@@ -2567,6 +2571,147 @@ function renderAttachmentLinks(anexo, label = 'Abrir anexo') {
     </div>
   `;
 }
+function formatAttachmentSize(bytes) {
+  const size = Number(bytes || 0);
+  if (!size) return '';
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+function attachmentKindLabel(item = {}) {
+  const type = String(item.tipo || '').toLowerCase();
+  const name = String(item.nome || '').toLowerCase();
+  if (type.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|bmp|svg)$/.test(name)) return 'IMG';
+  if (type.includes('pdf') || name.endsWith('.pdf')) return 'PDF';
+  if (type.includes('sheet') || type.includes('excel') || /\.(xlsx|xls|csv)$/.test(name)) return 'XLS';
+  if (type.includes('xml') || name.endsWith('.xml')) return 'XML';
+  if (type.includes('text') || name.endsWith('.txt')) return 'TXT';
+  return 'ARQ';
+}
+
+function attachmentEntryKey(item = {}) {
+  return item.storagePath || item.path || item.url || `${item.nome || 'arquivo'}|${item.tamanho || 0}`;
+}
+
+function collectTicketAttachmentEntries(ticket, historyItems = []) {
+  const entries = [];
+  const seen = new Set();
+
+  function pushAttachments(anexo, meta = {}) {
+    attachmentItems(anexo).forEach((item) => {
+      if (!item?.url) return;
+      const key = attachmentEntryKey(item);
+      if (seen.has(key)) return;
+      seen.add(key);
+      entries.push({
+        nome: item.nome || 'arquivo',
+        tipo: item.tipo || '',
+        tamanho: Number(item.tamanho || item.size || 0) || 0,
+        url: item.url,
+        path: item.storagePath || item.path || '',
+        criadoEm: meta.criadoEm || item.criadoEm || null,
+        usuarioNome: meta.usuarioNome || meta.usuarioEmail || '',
+        origem: meta.origem || '',
+        texto: meta.texto || ''
+      });
+    });
+  }
+
+  historyItems.forEach((item) => {
+    pushAttachments(item.anexo, {
+      criadoEm: item.criadoEm,
+      usuarioNome: item.usuarioNome || item.usuarioEmail || 'Sistema',
+      origem: historyTypeLabel(item.tipo),
+      texto: item.texto || ''
+    });
+  });
+
+  pushAttachments(ticket?.anexo, {
+    criadoEm: ticket?.ultimaOcorrenciaEm || ticket?.atualizadoEm || ticket?.criadoEm || null,
+    usuarioNome: ticket?.ultimaOcorrenciaUsuarioNome || ticket?.ultimaOcorrenciaUsuarioEmail || '',
+    origem: 'Última ocorrência',
+    texto: ticket?.ultimaOcorrenciaTexto || ''
+  });
+
+  return entries.sort((a, b) => timestampMillis(b.criadoEm) - timestampMillis(a.criadoEm));
+}
+
+function ensureTicketAttachmentsPanelStyles() {
+  if (document.getElementById('ticketAttachmentsPanelStyles')) return;
+  const style = document.createElement('style');
+  style.id = 'ticketAttachmentsPanelStyles';
+  style.textContent = [
+    '.ticket-attachments-panel { margin: 14px 0; border: 1px solid #d9e2f2; border-radius: 16px; background: #fff; padding: 14px; }',
+    '.ticket-attachments-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }',
+    '.ticket-attachments-head strong { display: block; font-size: 16px; }',
+    '.ticket-attachments-head small { color: #6b7280; }',
+    '.ticket-attachments-badge { min-width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0 10px; border-radius: 999px; background: #eef4ff; color: #2456d8; font-weight: 700; }',
+    '.ticket-attachments-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }',
+    '.ticket-attachment-card { display: flex; align-items: flex-start; gap: 10px; border: 1px solid #e4e9f3; border-radius: 14px; padding: 10px 12px; background: #fafcff; min-width: 0; }',
+    '.ticket-attachment-icon { flex: 0 0 42px; height: 42px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; letter-spacing: .04em; background: #eef4ff; color: #2456d8; }',
+    '.ticket-attachment-body { min-width: 0; flex: 1; }',
+    '.ticket-attachment-name { font-weight: 700; color: #18202f; word-break: break-word; }',
+    '.ticket-attachment-meta { margin-top: 4px; color: #6b7280; font-size: 12px; line-height: 1.4; }',
+    '.ticket-attachment-actions { margin-top: 8px; }',
+    '.ticket-attachment-actions a { font-weight: 700; text-decoration: none; }',
+    '.ticket-attachments-more { margin-top: 10px; color: #6b7280; font-size: 12px; }'
+  ].join(' ');
+  document.head.appendChild(style);
+}
+
+function renderTicketAttachmentsPanel(ticket, historyItems = []) {
+  const panel = $('ticketAttachmentsPanel');
+  if (!panel) return;
+
+  ensureTicketAttachmentsPanelStyles();
+
+  const entries = collectTicketAttachmentEntries(ticket, historyItems);
+  if (!entries.length) {
+    panel.innerHTML = `
+      <div class="ticket-attachments-head">
+        <div>
+          <strong>Anexos do chamado</strong>
+          <small>Nenhum anexo enviado até agora.</small>
+        </div>
+        <span class="ticket-attachments-badge">0</span>
+      </div>
+    `;
+    return;
+  }
+
+  const visible = entries.slice(0, MAX_ATTACHMENT_PANEL_ITEMS);
+  const hiddenCount = Math.max(0, entries.length - visible.length);
+
+  panel.innerHTML = `
+    <div class="ticket-attachments-head">
+      <div>
+        <strong>Anexos do chamado</strong>
+        <small>Todos os anexos reunidos em um lugar só.</small>
+      </div>
+      <span class="ticket-attachments-badge">${entries.length}</span>
+    </div>
+    <div class="ticket-attachments-grid">
+      ${visible.map((item) => `
+        <div class="ticket-attachment-card">
+          <div class="ticket-attachment-icon">${escapeHtml(attachmentKindLabel(item))}</div>
+          <div class="ticket-attachment-body">
+            <div class="ticket-attachment-name">${escapeHtml(item.nome || 'arquivo')}</div>
+            <div class="ticket-attachment-meta">
+              ${item.usuarioNome ? `${escapeHtml(item.usuarioNome)} • ` : ''}${escapeHtml(formatDate(item.criadoEm) || 'Sem data')}<br>
+              ${escapeHtml(item.origem || 'Anexo')} ${item.tamanho ? `• ${escapeHtml(formatAttachmentSize(item.tamanho))}` : ''}
+            </div>
+            <div class="ticket-attachment-actions">
+              <a class="attachment-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">Abrir anexo</a>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    ${hiddenCount ? `<div class="ticket-attachments-more">Mostrando ${visible.length} de ${entries.length} anexos para a tela não ficar poluída.</div>` : ''}
+  `;
+}
+
 
 function attachmentNamesFromFiles(files) {
   const items = normalizeFileArray(files);
