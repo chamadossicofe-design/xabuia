@@ -46,7 +46,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V30-card-nfe-enxuto-fila';
+const APP_VERSION = 'V31-storage-multianexo';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -97,6 +97,24 @@ const ADMIN_FILTERED_QUERY_LIMIT_PER_STATUS = 300;
 const ADMIN_SLA_SETTINGS_KEY = 'xabuia_admin_sla_v1';
 const COUNTED_STATUS_VALUES = ['aberto', 'reaberto', 'em_tratamento'];
 const HISTORY_LIMIT = 300;
+const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024;
+const MAX_ATTACHMENTS_PER_ACTION = 5;
+const ATTACHMENT_ACCEPT = 'image/*,.pdf,.txt,.csv,.xml,.xlsx,.xls';
+const ATTACHMENT_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'pdf', 'txt', 'csv', 'xml', 'xls', 'xlsx']);
+const ATTACHMENT_MIME_BY_EXT = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  pdf: 'application/pdf',
+  txt: 'text/plain',
+  csv: 'text/csv',
+  xml: 'text/xml',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+};
 
 const HISTORY_TYPE_LABELS = {
   criacao: 'Criação',
@@ -238,8 +256,11 @@ const state = {
   tickets: [],
   selectedTicketId: null,
   pendingTicketFile: null,
+  pendingTicketFiles: [],
   pendingHistoryFile: null,
+  pendingHistoryFiles: [],
   pendingProductFile: null,
+  pendingProductFiles: [],
   ticketBuckets: {},
   unsubTickets: null,
   unsubOrgs: null,
@@ -299,12 +320,7 @@ function showToast(message, type = 'info') {
 
 function showConnectionHelp(message = '') {
   if (!els.connectionHelp) return;
-  els.connectionHelp.innerHTML = `
-    <strong>Firestore bloqueou ou ainda não respondeu.</strong><br>
-    ${escapeHtml(message || 'Crie o Cloud Firestore e publique o arquivo firestore.rules.')}<br><br>
-    Se aparecer <strong>Missing or insufficient permissions</strong>, quase sempre é porque as regras ainda não foram publicadas no menu
-    <strong>Firestore Database &gt; Regras</strong>. Cole o arquivo <strong>firestore.rules</strong> inteiro e clique em <strong>Publicar</strong>.
-  `;
+  els.connectionHelp.textContent = message || 'Não foi possível conectar aos dados agora.';
   els.connectionHelp.classList.remove('hidden');
 }
 
@@ -1950,7 +1966,7 @@ async function renderTicketDetail(ticket) {
       </div>
     </section>
 
-    ${ticket.anexo?.url ? `<p class="detail-last-attachment"><a class="attachment-link" href="${escapeHtml(ticket.anexo.url)}" target="_blank" rel="noopener">Abrir último anexo: ${escapeHtml(ticket.anexo.nome || 'arquivo')}</a></p>` : ''}
+    ${renderAttachmentLinks(ticket.anexo, 'Abrir último anexo')}
 
     <div class="occurrence-panel">
       ${isOperatorOrAdmin() ? `
@@ -1976,7 +1992,7 @@ async function renderTicketDetail(ticket) {
       </label>
 
       <div class="history-attachment">
-        <input id="historyFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx" />
+        <input id="historyFileInput" class="hidden-file" type="file" accept="image/*,.pdf,.txt,.csv,.xml,.xlsx,.xls" multiple />
         <div id="historyPasteZone" class="paste-zone paste-zone-small" tabindex="0" role="button" aria-label="Adicionar anexo na ocorrência">
           <div class="paste-empty">
             <strong>Anexo da ocorrência</strong>
@@ -2079,7 +2095,7 @@ async function loadHistory(ticketId) {
         ${historyTypeBadge(item.tipo)}
       </div>
       ${renderTextContent(item.texto)}
-      ${item.anexo?.url ? `<a class="attachment-link" href="${escapeHtml(item.anexo.url)}" target="_blank" rel="noopener">Abrir anexo: ${escapeHtml(item.anexo.nome || 'arquivo')}</a>` : ''}
+      ${renderAttachmentLinks(item.anexo, 'Abrir anexo')}
       <small>${formatDate(item.criadoEm)}</small>
     </div>
   `).join('');
@@ -2094,7 +2110,7 @@ function timelineEventIcon(item) {
   if (String(type).includes('final')) return '✓';
   if (String(type).includes('diverg') || String(type).includes('devolver')) return '!';
   if (item?.source === 'status') return '•';
-  if (item?.anexo?.url) return '📎';
+  if (hasAttachment(item?.anexo)) return '📎';
   return '✎';
 }
 
@@ -2293,7 +2309,7 @@ function renderUnifiedTimelineGroup(group) {
         </div>
         ${text}
         ${renderTimelineStatusFlow(group)}
-        ${anexo?.url ? `<a class="attachment-link" href="${escapeHtml(anexo.url)}" target="_blank" rel="noopener">Abrir anexo: ${escapeHtml(anexo.nome || 'arquivo')}</a>` : ''}
+        ${renderAttachmentLinks(anexo, 'Abrir anexo')}
         <small class="timeline-date">${formatDate(group.primary?.criadoEm || history?.criadoEm)}</small>
       </div>
     </div>
@@ -2333,7 +2349,7 @@ function renderOpeningSummary(opening) {
     </div>
     <div class="opening-summary-body">
       ${renderTextContent(opening.texto || '')}
-      ${opening.anexo?.url ? `<a class="attachment-link" href="${escapeHtml(opening.anexo.url)}" target="_blank" rel="noopener">Abrir anexo: ${escapeHtml(opening.anexo.nome || 'arquivo')}</a>` : ''}
+      ${renderAttachmentLinks(opening.anexo, 'Abrir anexo')}
     </div>
   `;
 }
@@ -2391,7 +2407,7 @@ async function addHistory(ticket) {
 
   const textarea = $('newHistoryText');
   let texto = normalizeKey(textarea.value);
-  const file = state.pendingHistoryFile || $('historyFileInput')?.files?.[0] || null;
+  const files = getHistoryAttachmentFiles();
 
   if (!ticketId) return showToast('Chamado inválido.', 'error');
 
@@ -2404,7 +2420,7 @@ async function addHistory(ticket) {
     return showToast('Digite uma nova ocorrência explicando a alteração de status.', 'error');
   }
 
-  if (!texto && !file && !statusChanged) {
+  if (!texto && !files.length && !statusChanged) {
     return showToast('Digite a ocorrência ou anexe um arquivo antes de adicionar.', 'error');
   }
 
@@ -2416,8 +2432,8 @@ async function addHistory(ticket) {
 
   try {
     const ticketRef = doc(db, 'chamados', ticketId);
-    const { anexo, warning } = await tryUploadTicketFile(ticketId, file);
-    const textoFinal = texto || `Anexo enviado: ${file?.name || 'imagem-colada.png'}`;
+    const { anexo, warning } = await tryUploadTicketFile(ticketId, files);
+    const textoFinal = texto || `Anexo enviado: ${attachmentNamesFromFiles(files)}`;
     const historyType = statusChanged ? historyTypeForStatusChange(selectedStatus) : 'observacao';
 
     const updatePayload = {
@@ -2469,27 +2485,142 @@ async function addSystemHistory(ticketId, texto, tipo = 'status', extra = {}) {
   await addHistoryDoc(ticketId, texto, tipo, extra);
 }
 
-async function uploadTicketFile(ticketId, file) {
-  if (!file) return null;
-  const cleanName = (file.name || 'imagem-colada.png').replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = `chamados/${ticketId}/${Date.now()}-${cleanName}`;
-  const fileRef = ref(storage, path);
-  await uploadBytes(fileRef, file, { contentType: file.type || 'application/octet-stream' });
-  const url = await getDownloadURL(fileRef);
+function fileExtension(name = '') {
+  const clean = String(name || '').toLowerCase().split('?')[0].split('#')[0];
+  const parts = clean.split('.');
+  return parts.length > 1 ? parts.pop() : '';
+}
+
+function attachmentContentType(file) {
+  const ext = fileExtension(file?.name || '');
+  return file?.type || ATTACHMENT_MIME_BY_EXT[ext] || 'application/octet-stream';
+}
+
+function isAllowedAttachmentFile(file) {
+  if (!file) return false;
+  const ext = fileExtension(file.name || '');
+  const type = attachmentContentType(file);
+  return ATTACHMENT_EXTENSIONS.has(ext) || type.startsWith('image/');
+}
+
+function validateAttachmentFile(file) {
+  if (!file) return 'Arquivo inválido.';
+  if (file.size > MAX_ATTACHMENT_SIZE) return `${file.name || 'arquivo'} ultrapassa 5 MB.`;
+  if (!isAllowedAttachmentFile(file)) return `${file.name || 'arquivo'} não é um tipo permitido.`;
+  return '';
+}
+
+function cleanStorageFileName(name = '') {
+  const base = String(name || 'anexo')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120);
+  return base || `anexo-${Date.now()}`;
+}
+
+function normalizeFileArray(files) {
+  return [...(files || [])].filter(Boolean);
+}
+
+function attachmentSummary(anexos = []) {
+  const items = normalizeFileArray(anexos);
+  if (!items.length) return null;
+
+  if (items.length === 1) return items[0];
+
+  const totalSize = items.reduce((sum, item) => sum + Number(item.tamanho || item.size || 0), 0);
   return {
-    nome: file.name || 'imagem-colada.png',
-    tipo: file.type || null,
+    nome: `${items.length} anexos`,
+    tipo: 'multi',
+    tamanho: totalSize,
+    path: items[0]?.path || '',
+    url: items[0]?.url || '',
+    arquivos: items
+  };
+}
+
+function attachmentItems(anexo) {
+  if (!anexo) return [];
+  if (Array.isArray(anexo)) return anexo.filter(Boolean);
+  if (Array.isArray(anexo.arquivos)) return anexo.arquivos.filter(Boolean);
+  if (anexo.url || anexo.path || anexo.nome) return [anexo];
+  return [];
+}
+
+function hasAttachment(anexo) {
+  return attachmentItems(anexo).length > 0;
+}
+
+function renderAttachmentLinks(anexo, label = 'Abrir anexo') {
+  const items = attachmentItems(anexo);
+  if (!items.length) return '';
+
+  return `
+    <div class="attachment-links">
+      ${items.map((item, index) => item?.url ? `
+        <a class="attachment-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">
+          ${escapeHtml(items.length > 1 ? `${label} ${index + 1}:` : `${label}:`)} ${escapeHtml(item.nome || 'arquivo')}
+        </a>
+      ` : '').join('')}
+    </div>
+  `;
+}
+
+function attachmentNamesFromFiles(files) {
+  const items = normalizeFileArray(files);
+  if (!items.length) return 'anexo';
+  if (items.length === 1) return items[0].name || 'arquivo';
+  return `${items.length} anexos`;
+}
+
+async function uploadTicketFile(ticketId, file, index = 0) {
+  if (!file) return null;
+
+  const validation = validateAttachmentFile(file);
+  if (validation) throw new Error(validation);
+
+  const cleanName = cleanStorageFileName(file.name || `anexo-${index + 1}`);
+  const path = `xabuia/chamados/${ticketId}/${Date.now()}-${index + 1}-${cleanName}`;
+  const contentType = attachmentContentType(file);
+  const fileRef = ref(storage, path);
+
+  await uploadBytes(fileRef, file, { contentType });
+  const url = await getDownloadURL(fileRef);
+
+  return {
+    nome: file.name || cleanName,
+    tipo: contentType,
     tamanho: file.size,
     path,
+    storagePath: path,
     url
   };
 }
 
-async function tryUploadTicketFile(ticketId, file) {
-  if (!file) return { anexo: null, warning: '' };
+async function uploadTicketFiles(ticketId, files) {
+  const fileList = normalizeFileArray(Array.isArray(files) ? files : (files ? [files] : []));
+  if (!fileList.length) return null;
+
+  if (fileList.length > MAX_ATTACHMENTS_PER_ACTION) {
+    throw new Error(`Envie no máximo ${MAX_ATTACHMENTS_PER_ACTION} anexos por vez.`);
+  }
+
+  const uploaded = [];
+  for (let index = 0; index < fileList.length; index += 1) {
+    uploaded.push(await uploadTicketFile(ticketId, fileList[index], index));
+  }
+
+  return attachmentSummary(uploaded);
+}
+
+async function tryUploadTicketFile(ticketId, fileOrFiles) {
+  const files = normalizeFileArray(Array.isArray(fileOrFiles) ? fileOrFiles : (fileOrFiles ? [fileOrFiles] : []));
+  if (!files.length) return { anexo: null, warning: '' };
 
   try {
-    const anexo = await uploadTicketFile(ticketId, file);
+    const anexo = await uploadTicketFiles(ticketId, files);
     return { anexo, warning: '' };
   } catch (error) {
     console.warn('Anexo não enviado:', error);
@@ -2499,7 +2630,7 @@ async function tryUploadTicketFile(ticketId, file) {
     return {
       anexo: null,
       warning: storageHint
-        ? 'Chamado salvo, mas o anexo não foi enviado. Crie o Cloud Storage e publique o storage.rules quando for ativar anexos.'
+        ? 'Chamado salvo, mas o anexo não foi enviado. Confira as regras do Storage e use a pasta xabuia/.'
         : `Chamado salvo, mas o anexo não foi enviado: ${message || code}`
     };
   }
@@ -2637,7 +2768,7 @@ async function createTicket(event) {
   const chave = limparChaveNfe(els.ticketKeyInput.value);
   const observacao = normalizeKey(els.ticketObsInput.value);
   const tipoHistorico = 'criacao';
-  const file = state.pendingTicketFile || els.ticketFileInput.files?.[0] || null;
+  const files = getTicketAttachmentFiles();
 
   syncTicketKeyInput(true);
 
@@ -2690,7 +2821,7 @@ async function createTicket(event) {
     const existingTicket = existingInMemory || (existingSnap?.exists() ? { id: deterministicRef.id, ...existingSnap.data() } : null);
 
     if (existingTicket) {
-      const { anexo, warning } = await tryUploadTicketFile(existingRef.id, file);
+      const { anexo, warning } = await tryUploadTicketFile(existingRef.id, files);
       const updatePayload = {
         ...ticketStatusPayload('reaberto'),
         ...requesterUpdatePayload(),
@@ -2709,15 +2840,18 @@ async function createTicket(event) {
       showToast(warning || 'Já existia chamado com essa chave e formulário. Reabri o mesmo chamado e incluí a nova ocorrência.', warning ? 'error' : 'success');
       state.selectedTicketId = existingRef.id;
     } else {
-      const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, file);
-      const createPayload = {
-        ...createTicketBasePayload({ tipoChamado, chave, chaveBusca, org, observacao, tipoHistorico }),
-        ...(anexo ? { ...lastOccurrencePayload(observacao, tipoHistorico, anexo), anexo } : {})
-      };
+      const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, files);
+      const createPayload = createTicketBasePayload({ tipoChamado, chave, chaveBusca, org, observacao, tipoHistorico });
 
       await setDoc(deterministicRef, createPayload);
 
       const batch = writeBatch(db);
+      if (anexo) {
+        batch.update(deterministicRef, {
+          ...lastOccurrencePayload(observacao, tipoHistorico, anexo),
+          anexo
+        });
+      }
       batch.set(doc(collection(db, 'chamados', deterministicRef.id, 'historico')), historyPayload(observacao, tipoHistorico, anexo ? { anexo } : {}));
       await batch.commit();
 
@@ -2748,7 +2882,7 @@ async function createProductTicket(event) {
   const tipoChamado = els.productTypeInput?.value || 'reativacao_produtos';
   const codigoProduto = normalizeProductCode(els.productCodeInput.value);
   const observacao = normalizeKey(els.productObsInput.value);
-  const file = state.pendingProductFile || els.productFileInput?.files?.[0] || null;
+  const files = getProductAttachmentFiles();
 
   if (!isProductTicketType(tipoChamado)) {
     return showToast('Este formulário de produto ainda não está configurado.', 'error');
@@ -2800,7 +2934,7 @@ async function createProductTicket(event) {
     const existingTicket = existingInMemory || (existingSnap?.exists() ? { id: deterministicRef.id, ...existingSnap.data() } : null);
 
     if (existingTicket) {
-      const { anexo, warning } = await tryUploadTicketFile(existingRef.id, file);
+      const { anexo, warning } = await tryUploadTicketFile(existingRef.id, files);
       const updatePayload = {
         ...ticketStatusPayload('reaberto'),
         ...requesterUpdatePayload(),
@@ -2819,23 +2953,26 @@ async function createProductTicket(event) {
       showToast(warning || 'Já existia chamado desse produto para este formulário. Reabri e incluí a nova ocorrência.', warning ? 'error' : 'success');
       state.selectedTicketId = existingRef.id;
     } else {
-      const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, file);
-      const createPayload = {
-        ...createTicketBasePayload({
-          tipoChamado,
-          chave,
-          chaveBusca,
-          codigoProduto,
-          org,
-          observacao,
-          tipoHistorico: 'criacao'
-        }),
-        ...(anexo ? { ...lastOccurrencePayload(observacao, 'criacao', anexo), anexo } : {})
-      };
+      const { anexo, warning } = await tryUploadTicketFile(deterministicRef.id, files);
+      const createPayload = createTicketBasePayload({
+        tipoChamado,
+        chave,
+        chaveBusca,
+        codigoProduto,
+        org,
+        observacao,
+        tipoHistorico: 'criacao'
+      });
 
       await setDoc(deterministicRef, createPayload);
 
       const batch = writeBatch(db);
+      if (anexo) {
+        batch.update(deterministicRef, {
+          ...lastOccurrencePayload(observacao, 'criacao', anexo),
+          anexo
+        });
+      }
       batch.set(doc(collection(db, 'chamados', deterministicRef.id, 'historico')), historyPayload(observacao, 'criacao', anexo ? { anexo } : {}));
       await batch.commit();
 
@@ -3508,197 +3645,166 @@ function cleanupListeners() {
 }
 
 
-function setTicketAttachment(file) {
-  if (!file) return;
-  state.pendingTicketFile = file;
+function previewFileListHtml(files) {
+  const fileList = normalizeFileArray(files);
+  if (!fileList.length) return '';
 
-  if (els.ticketPasteZone) {
-    els.ticketPasteZone.classList.add('has-file');
-  }
-
-  if (els.ticketPastePreview) {
+  const firstImage = fileList.find((file) => attachmentContentType(file).startsWith('image/'));
+  const names = fileList.map((file) => {
     const sizeKb = file.size ? `${Math.round(file.size / 1024)} KB` : '';
-    const isImage = file.type?.startsWith('image/');
-    els.ticketPastePreview.innerHTML = `
-      ${isImage ? `<img src="${URL.createObjectURL(file)}" alt="Prévia do anexo" />` : ''}
-      <div><strong>${escapeHtml(file.name || 'imagem-colada.png')}</strong><br><small>${escapeHtml(file.type || 'arquivo')} ${escapeHtml(sizeKb)}</small></div>
-    `;
-    els.ticketPastePreview.classList.remove('hidden');
+    return `<li>${escapeHtml(file.name || 'arquivo')} <small>${escapeHtml(sizeKb)}</small></li>`;
+  }).join('');
+
+  return `
+    ${firstImage ? `<img src="${URL.createObjectURL(firstImage)}" alt="Prévia do anexo" />` : ''}
+    <div>
+      <strong>${fileList.length === 1 ? '1 anexo selecionado' : `${fileList.length} anexos selecionados`}</strong>
+      <ul class="attachment-preview-list">${names}</ul>
+    </div>
+  `;
+}
+
+function prepareAttachmentFiles(files) {
+  const incoming = normalizeFileArray(files).slice(0, MAX_ATTACHMENTS_PER_ACTION);
+  const valid = [];
+  const errors = [];
+
+  incoming.forEach((file) => {
+    const error = validateAttachmentFile(file);
+    if (error) {
+      errors.push(error);
+    } else {
+      valid.push(file);
+    }
+  });
+
+  if (normalizeFileArray(files).length > MAX_ATTACHMENTS_PER_ACTION) {
+    errors.push(`Limite de ${MAX_ATTACHMENTS_PER_ACTION} anexos por vez.`);
   }
 
-  if (els.clearTicketFileBtn) els.clearTicketFileBtn.classList.remove('hidden');
+  if (errors.length) showToast(errors[0], 'error');
+  return valid;
+}
+
+function applyAttachmentState(kind, files) {
+  const prepared = prepareAttachmentFiles(files);
+  const first = prepared[0] || null;
+
+  if (kind === 'ticket') {
+    state.pendingTicketFiles = prepared;
+    state.pendingTicketFile = first;
+    updateAttachmentPreview(els.ticketPasteZone, els.ticketPastePreview, els.clearTicketFileBtn, prepared);
+  }
+
+  if (kind === 'product') {
+    state.pendingProductFiles = prepared;
+    state.pendingProductFile = first;
+    updateAttachmentPreview(els.productPasteZone, els.productPastePreview, els.clearProductFileBtn, prepared);
+  }
+
+  if (kind === 'history') {
+    state.pendingHistoryFiles = prepared;
+    state.pendingHistoryFile = first;
+    updateAttachmentPreview($('historyPasteZone'), $('historyPastePreview'), $('clearHistoryFileBtn'), prepared);
+  }
+}
+
+function updateAttachmentPreview(zone, preview, clearBtn, files) {
+  const fileList = normalizeFileArray(files);
+
+  if (zone) zone.classList.toggle('has-file', fileList.length > 0);
+
+  if (preview) {
+    preview.innerHTML = fileList.length ? previewFileListHtml(fileList) : '';
+    preview.classList.toggle('hidden', !fileList.length);
+  }
+
+  if (clearBtn) clearBtn.classList.toggle('hidden', !fileList.length);
+}
+
+function setTicketAttachment(files) {
+  applyAttachmentState('ticket', Array.isArray(files) ? files : normalizeFileArray(files?.length != null && !files.name ? files : [files]));
 }
 
 function clearTicketAttachment() {
   state.pendingTicketFile = null;
+  state.pendingTicketFiles = [];
   if (els.ticketFileInput) els.ticketFileInput.value = '';
-  if (els.ticketPasteZone) els.ticketPasteZone.classList.remove('has-file');
-  if (els.ticketPastePreview) {
-    els.ticketPastePreview.innerHTML = '';
-    els.ticketPastePreview.classList.add('hidden');
-  }
-  if (els.clearTicketFileBtn) els.clearTicketFileBtn.classList.add('hidden');
+  updateAttachmentPreview(els.ticketPasteZone, els.ticketPastePreview, els.clearTicketFileBtn, []);
 }
 
-
-function setProductAttachment(file) {
-  if (!file) return;
-  state.pendingProductFile = file;
-
-  if (els.productPasteZone) els.productPasteZone.classList.add('has-file');
-
-  if (els.productPastePreview) {
-    const sizeKb = file.size ? `${Math.round(file.size / 1024)} KB` : '';
-    const isImage = file.type?.startsWith('image/');
-    els.productPastePreview.innerHTML = `
-      ${isImage ? `<img src="${URL.createObjectURL(file)}" alt="Prévia do anexo" />` : ''}
-      <div><strong>${escapeHtml(file.name || 'imagem-colada.png')}</strong><br><small>${escapeHtml(file.type || 'arquivo')} ${escapeHtml(sizeKb)}</small></div>
-    `;
-    els.productPastePreview.classList.remove('hidden');
-  }
-
-  if (els.clearProductFileBtn) els.clearProductFileBtn.classList.remove('hidden');
+function setProductAttachment(files) {
+  applyAttachmentState('product', Array.isArray(files) ? files : normalizeFileArray(files?.length != null && !files.name ? files : [files]));
 }
 
 function clearProductAttachment() {
   state.pendingProductFile = null;
+  state.pendingProductFiles = [];
   if (els.productFileInput) els.productFileInput.value = '';
-  if (els.productPasteZone) els.productPasteZone.classList.remove('has-file');
-  if (els.productPastePreview) {
-    els.productPastePreview.innerHTML = '';
-    els.productPastePreview.classList.add('hidden');
-  }
-  if (els.clearProductFileBtn) els.clearProductFileBtn.classList.add('hidden');
+  updateAttachmentPreview(els.productPasteZone, els.productPastePreview, els.clearProductFileBtn, []);
 }
 
-function setHistoryAttachment(file) {
-  if (!file) return;
-  state.pendingHistoryFile = file;
-
-  const zone = $('historyPasteZone');
-  const preview = $('historyPastePreview');
-  const clearBtn = $('clearHistoryFileBtn');
-
-  if (zone) zone.classList.add('has-file');
-
-  if (preview) {
-    const sizeKb = file.size ? `${Math.round(file.size / 1024)} KB` : '';
-    const isImage = file.type?.startsWith('image/');
-    preview.innerHTML = `
-      ${isImage ? `<img src="${URL.createObjectURL(file)}" alt="Prévia do anexo" />` : ''}
-      <div><strong>${escapeHtml(file.name || 'imagem-colada.png')}</strong><br><small>${escapeHtml(file.type || 'arquivo')} ${escapeHtml(sizeKb)}</small></div>
-    `;
-    preview.classList.remove('hidden');
-  }
-
-  if (clearBtn) clearBtn.classList.remove('hidden');
+function setHistoryAttachment(files) {
+  applyAttachmentState('history', Array.isArray(files) ? files : normalizeFileArray(files?.length != null && !files.name ? files : [files]));
 }
 
 function clearHistoryAttachment() {
   state.pendingHistoryFile = null;
+  state.pendingHistoryFiles = [];
   const input = $('historyFileInput');
-  const zone = $('historyPasteZone');
-  const preview = $('historyPastePreview');
-  const clearBtn = $('clearHistoryFileBtn');
-
   if (input) input.value = '';
-  if (zone) zone.classList.remove('has-file');
-  if (preview) {
-    preview.innerHTML = '';
-    preview.classList.add('hidden');
-  }
-  if (clearBtn) clearBtn.classList.add('hidden');
+  updateAttachmentPreview($('historyPasteZone'), $('historyPastePreview'), $('clearHistoryFileBtn'), []);
+}
+
+function getTicketAttachmentFiles() {
+  return state.pendingTicketFiles?.length ? state.pendingTicketFiles : normalizeFileArray(els.ticketFileInput?.files || []);
+}
+
+function getProductAttachmentFiles() {
+  return state.pendingProductFiles?.length ? state.pendingProductFiles : normalizeFileArray(els.productFileInput?.files || []);
+}
+
+function getHistoryAttachmentFiles() {
+  return state.pendingHistoryFiles?.length ? state.pendingHistoryFiles : normalizeFileArray($('historyFileInput')?.files || []);
+}
+
+function filesFromClipboard(event) {
+  const items = [...(event.clipboardData?.items || [])];
+  return items
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item, index) => {
+      const file = item.getAsFile();
+      if (!file) return null;
+      const ext = file.type.includes('jpeg') ? 'jpg' : 'png';
+      return new File([file], `imagem-colada-${Date.now()}-${index + 1}.${ext}`, { type: file.type || `image/${ext}` });
+    })
+    .filter(Boolean);
 }
 
 function firstImageFromClipboard(event) {
-  const items = [...(event.clipboardData?.items || [])];
-  const imageItem = items.find((item) => item.kind === 'file' && item.type.startsWith('image/'));
-  const file = imageItem?.getAsFile();
-  if (!file) return null;
-  const ext = file.type.includes('jpeg') ? 'jpg' : 'png';
-  return new File([file], `imagem-colada-${Date.now()}.${ext}`, { type: file.type || `image/${ext}` });
+  return filesFromClipboard(event)[0] || null;
 }
 
-function setupPasteZone() {
-  if (!els.ticketPasteZone || !els.ticketFileInput) return;
-
-  els.ticketPasteZone.addEventListener('click', () => els.ticketFileInput.click());
-  els.ticketFileInput.addEventListener('change', () => setTicketAttachment(els.ticketFileInput.files?.[0]));
-  els.clearTicketFileBtn?.addEventListener('click', clearTicketAttachment);
-
-  els.ticketPasteZone.addEventListener('paste', (event) => {
-    const file = firstImageFromClipboard(event);
-    if (!file) return;
-    event.preventDefault();
-    setTicketAttachment(file);
-    showToast('Imagem colada no anexo.', 'success');
-  });
-
-  els.ticketPasteZone.addEventListener('dragover', (event) => {
-    event.preventDefault();
-    els.ticketPasteZone.classList.add('drag-over');
-  });
-
-  els.ticketPasteZone.addEventListener('dragleave', () => els.ticketPasteZone.classList.remove('drag-over'));
-
-  els.ticketPasteZone.addEventListener('drop', (event) => {
-    event.preventDefault();
-    els.ticketPasteZone.classList.remove('drag-over');
-    const file = event.dataTransfer?.files?.[0];
-    if (file) setTicketAttachment(file);
-  });
-}
-
-
-function setupProductPasteZone() {
-  if (!els.productPasteZone || !els.productFileInput) return;
-
-  els.productPasteZone.addEventListener('click', () => els.productFileInput.click());
-  els.productFileInput.addEventListener('change', () => setProductAttachment(els.productFileInput.files?.[0]));
-  els.clearProductFileBtn?.addEventListener('click', clearProductAttachment);
-
-  els.productPasteZone.addEventListener('paste', (event) => {
-    const file = firstImageFromClipboard(event);
-    if (!file) return;
-    event.preventDefault();
-    setProductAttachment(file);
-    showToast('Imagem colada no anexo.', 'success');
-  });
-
-  els.productPasteZone.addEventListener('dragover', (event) => {
-    event.preventDefault();
-    els.productPasteZone.classList.add('drag-over');
-  });
-
-  els.productPasteZone.addEventListener('dragleave', () => els.productPasteZone.classList.remove('drag-over'));
-
-  els.productPasteZone.addEventListener('drop', (event) => {
-    event.preventDefault();
-    els.productPasteZone.classList.remove('drag-over');
-    const file = event.dataTransfer?.files?.[0];
-    if (file) setProductAttachment(file);
-  });
-}
-
-function setupHistoryPasteZone() {
-  const zone = $('historyPasteZone');
-  const input = $('historyFileInput');
-  const clearBtn = $('clearHistoryFileBtn');
+function setupAttachmentZone({ zone, input, clearBtn, setter, clearer, pasteMessage }) {
   if (!zone || !input) return;
 
+  input.multiple = true;
+  input.accept = ATTACHMENT_ACCEPT;
+
   zone.addEventListener('click', () => input.click());
-  input.addEventListener('change', () => setHistoryAttachment(input.files?.[0]));
-  clearBtn?.addEventListener('click', clearHistoryAttachment);
+  input.addEventListener('change', () => setter(input.files));
+  clearBtn?.addEventListener('click', clearer);
 
   zone.addEventListener('paste', (event) => {
-    const file = firstImageFromClipboard(event);
-    if (!file) return;
+    const files = filesFromClipboard(event);
+    if (!files.length) return;
     event.preventDefault();
-    setHistoryAttachment(file);
-    showToast('Imagem colada na ocorrência.', 'success');
+    setter(files);
+    showToast(pasteMessage || 'Imagem colada no anexo.', 'success');
   });
 
   zone.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types?.includes('Files')) return;
     event.preventDefault();
     zone.classList.add('drag-over');
   });
@@ -3708,8 +3814,68 @@ function setupHistoryPasteZone() {
   zone.addEventListener('drop', (event) => {
     event.preventDefault();
     zone.classList.remove('drag-over');
-    const file = event.dataTransfer?.files?.[0];
-    if (file) setHistoryAttachment(file);
+    const files = normalizeFileArray(event.dataTransfer?.files || []);
+    if (files.length) setter(files);
+  });
+}
+
+function setupPasteZone() {
+  setupAttachmentZone({
+    zone: els.ticketPasteZone,
+    input: els.ticketFileInput,
+    clearBtn: els.clearTicketFileBtn,
+    setter: setTicketAttachment,
+    clearer: clearTicketAttachment,
+    pasteMessage: 'Imagem colada no anexo.'
+  });
+}
+
+function setupProductPasteZone() {
+  setupAttachmentZone({
+    zone: els.productPasteZone,
+    input: els.productFileInput,
+    clearBtn: els.clearProductFileBtn,
+    setter: setProductAttachment,
+    clearer: clearProductAttachment,
+    pasteMessage: 'Imagem colada no anexo.'
+  });
+}
+
+function setupHistoryPasteZone() {
+  setupAttachmentZone({
+    zone: $('historyPasteZone'),
+    input: $('historyFileInput'),
+    clearBtn: $('clearHistoryFileBtn'),
+    setter: setHistoryAttachment,
+    clearer: clearHistoryAttachment,
+    pasteMessage: 'Imagem colada na ocorrência.'
+  });
+}
+
+function activeAttachmentSetter() {
+  if (els.ticketDialog?.open) return setTicketAttachment;
+  if (els.productTicketDialog?.open) return setProductAttachment;
+  if ($('historyPasteZone') && state.selectedTicketId) return setHistoryAttachment;
+  return null;
+}
+
+function setupPageDropAttachments() {
+  document.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types?.includes('Files')) return;
+    if (!activeAttachmentSetter()) return;
+    event.preventDefault();
+  });
+
+  document.addEventListener('drop', (event) => {
+    const files = normalizeFileArray(event.dataTransfer?.files || []);
+    if (!files.length) return;
+
+    const setter = activeAttachmentSetter();
+    if (!setter) return;
+
+    event.preventDefault();
+    setter(files);
+    showToast(files.length === 1 ? 'Anexo selecionado.' : `${Math.min(files.length, MAX_ATTACHMENTS_PER_ACTION)} anexos selecionados.`, 'success');
   });
 }
 
@@ -3896,23 +4062,18 @@ document.addEventListener('change', (event) => {
 });
 
 document.addEventListener('paste', (event) => {
-  const file = firstImageFromClipboard(event);
-  if (!file) return;
+  const files = filesFromClipboard(event);
+  if (!files.length) return;
 
-  if (els.ticketDialog?.open) {
-    event.preventDefault();
-    setTicketAttachment(file);
-    showToast('Imagem colada no anexo.', 'success');
-    return;
-  }
+  const setter = activeAttachmentSetter();
+  if (!setter) return;
 
-  if (els.productTicketDialog?.open) {
-    event.preventDefault();
-    setProductAttachment(file);
-    showToast('Imagem colada no anexo.', 'success');
-  }
+  event.preventDefault();
+  setter(files);
+  showToast(files.length === 1 ? 'Imagem colada no anexo.' : `${files.length} imagens coladas no anexo.`, 'success');
 });
 
 setupPasteZone();
 setupProductPasteZone();
+setupPageDropAttachments();
 setAuthMode('login');
