@@ -1,12 +1,13 @@
 // ==UserScript==
-// @name         Xabuia • Loader oficial page-context
-// @namespace    xabuia/infradesk
-// @version      2.0.1
-// @description  Carrega a versão publicada do Xabuia no contexto da página para preservar login Google e atualização centralizada.
+// @name         Xabuia • Loader oficial multi-sistema
+// @namespace    xabuia/multi
+// @version      2.1.1
+// @description  Carrega o Xabuia correto conforme o sistema: Infradesk ou Acelerato. Compatível com o Painel da Doca.
 // @author       Xabuia
-// @match        https://*.infradesk.app/backend/chamados/painel*
 // @match        https://*.infradesk.app/backend/chamados*
+// @match        https://*.acelerato.com/*
 // @run-at       document-end
+// @noframes
 // @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
 // @homepageURL  https://chamadossicofe-design.github.io/xabuia/
 // @updateURL    https://chamadossicofe-design.github.io/xabuia/xabuia-loader-oficial.user.js
