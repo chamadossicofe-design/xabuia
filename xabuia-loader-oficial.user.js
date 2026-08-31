@@ -1,11 +1,10 @@
 // ==UserScript==
-// @name         Xabuia • Loader oficial multi-sistema
-// @namespace    xabuia/multi
-// @version      2.1.1
-// @description  Carrega o Xabuia correto conforme o sistema: Infradesk ou Acelerato. Compatível com o Painel da Doca.
+// @name         Xabuia • Loader oficial InfraDesk
+// @namespace    xabuia/infradesk-loader
+// @version      3.0.1
+// @description  Carrega o Xabuia do InfraDesk diretamente pelo Tampermonkey, sem fetch, eval ou injeção por script tag.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados*
-// @match        https://*.acelerato.com/*
 // @run-at       document-end
 // @noframes
 // @icon         https://chamadossicofe-design.github.io/xabuia/xabuia.png
@@ -16,122 +15,95 @@
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js
+// @require      https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js?v=3.2.11-loader-3.0.1
 // ==/UserScript==
 
 (function () {
   'use strict';
 
-  const XABUIA_LOADER_VERSION = '2.0.1';
-  const XABUIA_REMOTE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
+  const XABUIA_LOADER_VERSION = '3.0.1';
+  const XABUIA_MAIN_EXPECTED_VERSION = '3.2.11';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
-
-  if (window.__XABUIA_LOADER_PAGE_CONTEXT_ACTIVE__) {
-    console.warn('[Xabuia Loader] Loader já está ativo nesta página. Ignorando segunda carga.');
-    return;
-  }
 
   window.__XABUIA_LOADER_PAGE_CONTEXT_ACTIVE__ = true;
   window.__XABUIA_LOADER_VERSION__ = XABUIA_LOADER_VERSION;
   window.__XABUIA_LOADER_UPDATE_URL__ = 'https://chamadossicofe-design.github.io/xabuia/xabuia-loader-oficial.user.js';
 
-  function cacheBustUrl(url) {
-    return `${url}${String(url).includes('?') ? '&' : '?'}xabuia_loader_page=${Date.now()}`;
+  function xabuiaReallyLoaded() {
+    return Boolean(
+      window.__XABUIA_APP_RUNNING__
+      && document.getElementById('xabuia-tm-style')
+      && document.getElementById('xabuia-overlay')
+    );
   }
 
-  function extractMetaVersion(scriptText) {
-    const match = String(scriptText || '').match(/\/\/\s*@version\s+([^\s]+)/i);
-    return match ? match[1].trim() : '';
+  function removeLoaderError() {
+    document.getElementById('xabuia-loader-error')?.remove();
   }
 
-  function showLoaderError(message) {
-    const old = document.getElementById('xabuia-loader-error');
-    if (old) old.remove();
+  function showLoaderError() {
+    removeLoaderError();
+
+    const firebaseReady = typeof window.firebase !== 'undefined';
+    const appFlag = Boolean(window.__XABUIA_APP_RUNNING__);
+    const styleReady = Boolean(document.getElementById('xabuia-tm-style'));
+    const overlayReady = Boolean(document.getElementById('xabuia-overlay'));
 
     const box = document.createElement('div');
     box.id = 'xabuia-loader-error';
-    box.style.cssText = 'position:fixed;inset:auto 18px 18px auto;z-index:2147483647;max-width:460px;background:#7f1d1d;color:#fff;padding:14px 16px;border-radius:14px;box-shadow:0 18px 45px rgba(0,0,0,.25);font-family:Arial,sans-serif;font-size:13px;line-height:1.4';
-    box.innerHTML = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:6px"><img src="${XABUIA_ICON_URL}" alt="" style="width:26px;height:26px;border-radius:7px"><strong>Xabuia não carregou</strong></div>${String(message || 'Falha desconhecida.')}`;
-    document.body.appendChild(box);
+    box.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;max-width:480px;background:#7f1d1d;color:#fff;padding:14px 16px;border-radius:14px;box-shadow:0 18px 45px rgba(0,0,0,.28);font-family:Arial,sans-serif;font-size:13px;line-height:1.45';
+    box.innerHTML = `
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:7px">
+        <img src="${XABUIA_ICON_URL}" alt="" style="width:28px;height:28px;border-radius:7px">
+        <strong>Xabuia não terminou de carregar</strong>
+      </div>
+      <div>Atualize a página com <strong>Ctrl + Shift + R</strong>. Se continuar, abra o Console e procure por <strong>[Xabuia]</strong>.</div>
+      <div style="margin-top:7px;font-size:11px;opacity:.9">
+        Diagnóstico: Firebase ${firebaseReady ? 'OK' : 'FALHOU'} · Aplicativo ${appFlag ? 'iniciou' : 'não iniciou'} · Estilo ${styleReady ? 'OK' : 'ausente'} · Janela ${overlayReady ? 'OK' : 'ausente'}
+      </div>
+      <div style="margin-top:4px;font-size:11px;opacity:.8">Loader ${XABUIA_LOADER_VERSION} · Xabuia esperado ${XABUIA_MAIN_EXPECTED_VERSION}</div>
+    `;
+
+    (document.body || document.documentElement).appendChild(box);
   }
 
-  function alreadyHasXabuiaUi() {
-    return !!(document.getElementById('xabuia-overlay') || document.getElementById('xabuia-tm-style') || window.__XABUIA_APP_RUNNING__);
+  function announceReady() {
+    removeLoaderError();
+    window.__XABUIA_LOADER_READY__ = true;
+    window.dispatchEvent(new CustomEvent('xabuia:loader-ready', {
+      detail: {
+        loaderVersion: XABUIA_LOADER_VERSION,
+        xabuiaVersion: window.__XABUIA_REMOTE_VERSION || XABUIA_MAIN_EXPECTED_VERSION
+      }
+    }));
+    console.log(`[Xabuia Loader] Pronto. Loader ${XABUIA_LOADER_VERSION}; Xabuia ${window.__XABUIA_REMOTE_VERSION || XABUIA_MAIN_EXPECTED_VERSION}.`);
   }
 
-  function executeRemoteCode(remoteCode, remoteVersion) {
-    if (alreadyHasXabuiaUi()) {
-      console.warn('[Xabuia Loader] Xabuia já parece estar carregado. Não vou executar novamente.');
+  function verifyRealLoad() {
+    if (xabuiaReallyLoaded()) {
+      announceReady();
       return;
     }
 
-    window.__XABUIA_REMOTE_LOADER_ACTIVE = true;
-    window.__XABUIA_REMOTE_VERSION = remoteVersion || 'remota';
+    let attempts = 0;
+    const maximumAttempts = 20;
+    const timer = window.setInterval(() => {
+      attempts += 1;
 
-    const prelude = [
-      'window.__XABUIA_REMOTE_LOADER_ACTIVE = true;',
-      `window.__XABUIA_REMOTE_VERSION = ${JSON.stringify(remoteVersion || 'remota')};`,
-      `window.__XABUIA_LOADER_VERSION__ = ${JSON.stringify(XABUIA_LOADER_VERSION)};`
-    ].join('\n');
-
-    console.log(`[Xabuia Loader] Executando versão publicada no contexto da página: ${remoteVersion || 'remota'} | loader ${XABUIA_LOADER_VERSION}`);
-    (0, eval)(`${prelude}\n${remoteCode}\n//# sourceURL=${XABUIA_REMOTE_URL}`);
-  }
-
-  async function loadByFetchEval() {
-    const response = await fetch(cacheBustUrl(XABUIA_REMOTE_URL), {
-      cache: 'no-store',
-      credentials: 'omit',
-      mode: 'cors'
-    });
-
-    if (!response.ok) throw new Error(`HTTP ${response.status || 'sem resposta'} ao baixar o Xabuia.`);
-
-    const remoteCode = await response.text();
-    if (!remoteCode || !remoteCode.includes('Xabuia')) throw new Error('Arquivo remoto vazio ou inválido.');
-
-    executeRemoteCode(remoteCode, extractMetaVersion(remoteCode));
-  }
-
-  function loadByScriptTagFallback() {
-    return new Promise((resolve, reject) => {
-      if (alreadyHasXabuiaUi()) {
-        resolve();
+      if (xabuiaReallyLoaded()) {
+        window.clearInterval(timer);
+        announceReady();
         return;
       }
 
-      window.__XABUIA_REMOTE_LOADER_ACTIVE = true;
-      window.__XABUIA_REMOTE_VERSION = 'remota-script-tag';
-      window.__XABUIA_LOADER_VERSION__ = XABUIA_LOADER_VERSION;
-
-      const script = document.createElement('script');
-      script.src = cacheBustUrl(XABUIA_REMOTE_URL);
-      script.async = false;
-      script.onload = () => {
-        console.log(`[Xabuia Loader] Xabuia carregado por script tag fallback. Loader ${XABUIA_LOADER_VERSION}.`);
-        resolve();
-      };
-      script.onerror = () => reject(new Error('Fallback por script tag também falhou. Pode ser bloqueio de rede/CSP.'));
-      (document.head || document.documentElement).appendChild(script);
-    });
-  }
-
-  async function loadRemoteXabuia() {
-    try {
-      await loadByFetchEval();
-    } catch (fetchError) {
-      console.warn('[Xabuia Loader] Fetch/eval falhou; tentando fallback por script tag:', fetchError);
-      try {
-        await loadByScriptTagFallback();
-      } catch (fallbackError) {
-        console.error('[Xabuia Loader] Erro ao carregar Xabuia remoto:', fallbackError);
-        showLoaderError(`${fetchError?.message || 'Falha no carregamento principal.'}<br>${fallbackError?.message || ''}`);
+      if (attempts >= maximumAttempts) {
+        window.clearInterval(timer);
+        window.__XABUIA_LOADER_READY__ = false;
+        console.error(`[Xabuia Loader] O Xabuia não montou a interface após ${maximumAttempts * 250} ms.`);
+        showLoaderError();
       }
-    }
+    }, 250);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', loadRemoteXabuia, { once: true });
-  } else {
-    loadRemoteXabuia();
-  }
+  verifyRealLoad();
 })();
