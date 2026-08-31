@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.10
-// @description  Xabuia Infradesk híbrido preparado para loader page-context: Google 3.0, e-mail/senha, botão sair e modo econômico.
+// @version      3.2.11
+// @description  Xabuia Infradesk compatível com outros aplicativos Firebase na mesma página, login híbrido e modo econômico.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados/painel*
 // @match        https://*.infradesk.app/backend/chamados*
@@ -31,7 +31,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.10-loader-ready';
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.11-firebase-coexistencia';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
   const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
@@ -290,7 +290,19 @@
   /********************************************************************
    * FIREBASE
    ********************************************************************/
-  const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
+  // O Comercial usa um Firebase NOMEADO. Por isso, firebase.apps.length pode ser
+  // maior que zero mesmo quando o aplicativo padrão [DEFAULT] do Xabuia ainda
+  // não existe. Consultamos o padrão diretamente e só o criamos quando faltar.
+  // Assim Xabuia e Comercial podem iniciar em qualquer ordem na mesma página.
+  function getXabuiaFirebaseApp() {
+    try {
+      return firebase.app();
+    } catch (_) {
+      return firebase.initializeApp(firebaseConfig);
+    }
+  }
+
+  const app = getXabuiaFirebaseApp();
   const auth = firebase.auth(app);
   const db = firebase.firestore(app);
   auth.languageCode = 'pt-BR';
