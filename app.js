@@ -48,7 +48,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V33-login-usuario-alertas';
+const APP_VERSION = 'V33.1-login-usuario-blin';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -146,6 +146,7 @@ const googleProvider = new GoogleAuthProvider();
 const functions = getFunctions(app, 'us-central1');
 const entrarPorUsuario = httpsCallable(functions, 'entrarPorUsuario');
 const definirUsuario = httpsCallable(functions, 'definirUsuario');
+const XABUIA_BLIN_URL = new URL('./blin.mp3', import.meta.url).href;
 
 const $ = (id) => document.getElementById(id);
 
@@ -1459,30 +1460,38 @@ function loadMyNotices() {
   } catch (_) { state.notifications = []; }
   updateNoticeButton();
 }
-function soundContext() {
-  const AudioCtor = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtor) return null;
-  if (!state.soundContext) state.soundContext = new AudioCtor();
-  return state.soundContext;
+// V33.1: áudio oficial publicado no mesmo GitHub Pages do site.
+// Um único elemento HTMLAudioElement por aba evita múltiplos sons sobrepostos.
+function soundElement() {
+  if (!state.soundElement) {
+    state.soundElement = new Audio(XABUIA_BLIN_URL);
+    state.soundElement.preload = 'auto';
+    state.soundElement.volume = 0.80;
+  }
+  return state.soundElement;
 }
 async function unlockNotificationSound() {
-  try { await soundContext()?.resume(); } catch (_) {}
+  // Deve ser chamado pelo clique do botão Ativar som, por política de autoplay.
+  const audio = soundElement();
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+    await audio.play(); // toca uma vez para testar o som no próprio clique
+    return true;
+  } catch (error) {
+    console.warn('[Xabuia] Não consegui tocar blin.mp3:', error);
+    return false;
+  }
 }
 function beepXabuia() {
   if (!readSoundPref()) return;
+  const audio = soundElement();
   try {
-    const context = soundContext();
-    if (!context || context.state !== 'running') return;
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(784, context.currentTime);
-    oscillator.frequency.setValueAtTime(1046, context.currentTime + .12);
-    gain.gain.setValueAtTime(.0001, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(.10, context.currentTime + .02);
-    gain.gain.exponentialRampToValueAtTime(.0001, context.currentTime + .34);
-    oscillator.connect(gain); gain.connect(context.destination);
-    oscillator.start(); oscillator.stop(context.currentTime + .35);
+    audio.pause();
+    audio.currentTime = 0;
+    void audio.play().catch((error) => {
+      console.warn('[Xabuia] Chrome bloqueou som blin.mp3. Clique em Ativar som novamente:', error);
+    });
   } catch (error) { console.warn('[Xabuia] Som não disponível:', error); }
 }
 function webNotificationXabuia(notice) {
@@ -1527,11 +1536,15 @@ async function toggleXabuiaSound() {
   const next = !readSoundPref();
   localStorage.setItem(soundPrefKey(), next ? '1' : '0');
   if (next) {
-    await unlockNotificationSound();
+    // A reprodução ocorre uma vez como confirmação ao ativar.
+    const soundTest = unlockNotificationSound();
     if ('Notification' in window && Notification.permission === 'default') {
       try { await Notification.requestPermission(); } catch (_) {}
     }
-    beepXabuia();
+    if (!(await soundTest)) {
+      showToast('Não consegui tocar blin.mp3. Confira se o arquivo está publicado e o Chrome permite som.', 'error');
+      localStorage.setItem(soundPrefKey(), '0');
+    }
   }
   updateNoticeButton();
 }
@@ -1550,7 +1563,20 @@ async function chooseMyUsername() {
   const value = window.prompt('Escolha seu usuário Xabuia (pode ser igual ao InfraDesk):', '');
   if (value == null) return;
   try { await claimMyUsername(value); } catch (error) {
-    showToast(`Não foi possível definir o usuário: ${error?.message || 'verifique se as Cloud Functions já foram implantadas.'}`, 'error');
+    // O SDK apresenta apenas 'internal' quando o backend lança uma exceção não tratada.
+    // Não mostramos tokens, senhas ou dados privados no console.
+    console.error('[Xabuia] Erro ao definir login curto (confira a função definirUsuario no Firebase):', {
+      codigo: String(error?.code || ''),
+      mensagem: String(error?.message || ''),
+      detalhes: error?.details || null
+    });
+    const code = String(error?.code || '');
+    const message = /internal/i.test(code)
+      ? 'Falha interna da função definirUsuario. Verifique Firebase > Functions > Logs; os dados da conta não foram apagados.'
+      : /not-found|unavailable/i.test(code)
+      ? 'Função definirUsuario não disponível. Publique as Cloud Functions no Firebase (não no GitHub Pages).'
+      : String(error?.message || 'verifique a função definirUsuario no Firebase.');
+    showToast(`Não foi possível definir o usuário: ${message}`, 'error');
   }
 }
 
@@ -4287,7 +4313,6 @@ els.authForm.addEventListener('submit', submitAuth);
 els.xabuiaUsernameBtn?.addEventListener('click', chooseMyUsername);
 els.xabuiaSoundBtn?.addEventListener('click', toggleXabuiaSound);
 els.xabuiaAlertsBtn?.addEventListener('click', showMyNotices);
-document.addEventListener('click', () => { if (readSoundPref()) unlockNotificationSound(); }, { passive: true });
 els.googleBtn.addEventListener('click', loginWithGoogle);
 els.resetPasswordBtn.addEventListener('click', resetPassword);
 els.logoutBtn.addEventListener('click', logout);
