@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.11
+// @version      3.2.12
 // @description  Xabuia Infradesk compatível com outros aplicativos Firebase na mesma página, login híbrido e modo econômico.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados/painel*
@@ -31,7 +31,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.11-firebase-coexistencia';
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.12-firebase-coexistencia';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
   const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
@@ -748,16 +748,15 @@
         <div class="xabuia-modal-body">
           <div id="xabuia-authbar" class="xabuia-authbar">Verificando login...</div>
           <div id="xabuia-login-panel" class="xabuia-login-panel">
-            <div class="xabuia-login-grid">
-              <div class="xabuia-login-field"><label for="xabuia-email-login">E-mail Xabuia</label><input id="xabuia-email-login" type="email" autocomplete="email" placeholder="usuario@email.com"></div>
-              <div class="xabuia-login-field"><label for="xabuia-password-login">Senha</label><input id="xabuia-password-login" type="password" autocomplete="current-password" placeholder="Senha"></div>
-            </div>
+            <!-- Campos montados apenas quando o usuário abre o login.
+                 Evita que o gerenciador de senhas do InfraDesk preencha inputs ocultos. -->
+            <div id="xabuia-login-fields"></div>
             <div class="xabuia-login-actions">
               <button id="xabuia-login-email" class="xabuia-btn primary small" type="button">Entrar</button>
               <button id="xabuia-reset-password" class="xabuia-btn ghost small" type="button">Definir/recuperar senha</button>
               <button id="xabuia-google-redirect" class="xabuia-btn ghost small" type="button">Conectar Google</button>
             </div>
-            <div class="xabuia-login-help">Você pode entrar com e-mail/senha ou tentar o Google igual à versão 3.0. Use <strong>Sair</strong> para encerrar a sessão do Xabuia neste navegador.</div>
+            <div class="xabuia-login-help">Digite o e-mail completo e a senha cadastrados no <strong>Xabuia</strong>, não os dados do InfraDesk. O navegador pode sugerir credenciais do InfraDesk porque os dois aparecem no mesmo site. <strong>Sair</strong> encerra somente a autenticação Firebase usada pelo Xabuia.</div>
           </div>
           <div id="xabuia-info" class="xabuia-info"></div>
           <div class="xabuia-field"><label for="xabuia-comment">Ocorrência obrigatória</label><textarea id="xabuia-comment" placeholder="Ex.: Regra fiscal, ICMS divergente, GUIA ST..."></textarea></div>
@@ -799,10 +798,7 @@
     if (!authbar || !loginBtn || !saveBtn) return;
     loginBtn.style.display = state.user ? 'none' : '';
     if (logoutBtn) logoutBtn.style.display = state.user ? '' : 'none';
-    if (state.user) {
-      const panel = $('#xabuia-login-panel');
-      if (panel) panel.classList.remove('open');
-    }
+    if (state.user) clearLoginFields();
     if (!state.user) { authbar.className = 'xabuia-authbar'; authbar.innerHTML = 'Entre com Google ou e-mail/senha do Xabuia.'; saveBtn.disabled = true; return; }
     if (!state.profile) { authbar.className = 'xabuia-authbar'; authbar.innerHTML = `Logado como <strong>${escapeHtml(state.user.email)}</strong>, aguardando perfil Xabuia.`; saveBtn.disabled = true; return; }
     if (state.profile.ativo === false) { authbar.className = 'xabuia-authbar'; authbar.innerHTML = 'Sua conta Xabuia está bloqueada.'; saveBtn.disabled = true; return; }
@@ -934,14 +930,87 @@
       }
     }
   }
-  function closeModal() { $('#xabuia-overlay')?.classList.remove('open'); state.activeCard = null; state.activeData = null; state.activeTicketLookup = null; state.isSaving = false; }
+  function clearLoginFields() {
+    const panel = $('#xabuia-login-panel');
+    if (panel) panel.classList.remove('open');
+    // Não guarda senha no DOM após fechar. Nenhuma credencial é lida do InfraDesk.
+    $('#xabuia-login-fields')?.replaceChildren();
+  }
+
+  function closeModal() {
+    $('#xabuia-overlay')?.classList.remove('open');
+    clearLoginFields();
+    state.activeCard = null;
+    state.activeData = null;
+    state.activeTicketLookup = null;
+    state.isSaving = false;
+  }
+
+  function mountIndependentLoginFields() {
+    const slot = $('#xabuia-login-fields');
+    if (!slot) return;
+    // A página é infradesk.app: password managers associam a senha ao domínio
+    // do InfraDesk. Criar os campos apenas sob demanda reduz esse autofill.
+    slot.innerHTML = `
+      <div class="xabuia-login-grid">
+        <div class="xabuia-login-field">
+          <label for="xabuia-email-login">E-mail do Xabuia</label>
+          <input id="xabuia-email-login" name="xabuia_independent_email"
+                 type="email" inputmode="email" autocomplete="off"
+                 autocapitalize="off" spellcheck="false" readonly
+                 placeholder="usuario@email.com">
+        </div>
+        <div class="xabuia-login-field">
+          <label for="xabuia-password-login">Senha do Xabuia</label>
+          <input id="xabuia-password-login" name="xabuia_independent_password"
+                 type="password" autocomplete="new-password" readonly
+                 placeholder="Digite a senha do Xabuia">
+        </div>
+      </div>`;
+
+    const emailField = $('#xabuia-email-login');
+    const passwordField = $('#xabuia-password-login');
+    for (const field of [emailField, passwordField]) {
+      if (!field) continue;
+      field.value = '';
+      field.dataset.xabuiaManual = '0';
+      field.addEventListener('focus', () => {
+        // Limpa eventual autofill que passou pelos hints HTML.
+        field.value = '';
+        field.readOnly = false;
+      }, { once: true });
+      field.addEventListener('beforeinput', (event) => {
+        if (['insertText', 'insertCompositionText', 'insertFromPaste', 'insertFromDrop'].includes(event.inputType)) {
+          field.dataset.xabuiaManual = '1';
+        }
+      });
+      field.addEventListener('keydown', (event) => {
+        if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          field.dataset.xabuiaManual = '1';
+        }
+      });
+      field.addEventListener('paste', () => { field.dataset.xabuiaManual = '1'; });
+      field.addEventListener('drop', () => { field.dataset.xabuiaManual = '1'; });
+    }
+    passwordField?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        loginWithEmailPassword();
+      }
+    });
+  }
+
   function toggleLoginPanel() {
     const panel = $('#xabuia-login-panel');
     if (!panel) return;
-    panel.classList.toggle('open');
     if (panel.classList.contains('open')) {
-      setTimeout(() => $('#xabuia-email-login')?.focus(), 60);
+      clearLoginFields();
+      return;
     }
+    mountIndependentLoginFields();
+    panel.classList.add('open');
+    // Campos vazios por padrão; o usuário informa as credenciais do Xabuia.
+    // Evita focar automaticamente para não disparar sugestões do InfraDesk.
   }
 
   function readEmailLoginFields() {
@@ -955,8 +1024,23 @@
     if (loginWithEmailPassword.inProgress) return loginWithEmailPassword.inProgress;
 
     const { email, password } = readEmailLoginFields();
-    if (!email) { $('#xabuia-email-login')?.focus(); showToast('Informe o e-mail do Xabuia.', 'error'); return; }
-    if (!password) { $('#xabuia-password-login')?.focus(); showToast('Informe a senha do Xabuia.', 'error'); return; }
+    const emailField = $('#xabuia-email-login');
+    const passwordField = $('#xabuia-password-login');
+    if (!email || emailField?.dataset.xabuiaManual !== '1') {
+      emailField?.focus();
+      showToast('Digite seu e-mail do Xabuia. Não use o preenchimento automático do InfraDesk.', 'error');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      emailField?.focus();
+      showToast('O Firebase exige o e-mail completo, como nome@empresa.com.br. O login curto do InfraDesk não funciona aqui.', 'error');
+      return;
+    }
+    if (!password || passwordField?.dataset.xabuiaManual !== '1') {
+      passwordField?.focus();
+      showToast('Digite manualmente a senha cadastrada no Xabuia, não a senha sugerida do InfraDesk.', 'error');
+      return;
+    }
 
     const btn = $('#xabuia-login-email');
     const originalText = btn?.textContent || 'Entrar';
@@ -975,7 +1059,8 @@
           'auth/user-not-found': 'Não encontrei esse e-mail no Xabuia.',
           'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco e tente novamente.',
           'auth/network-request-failed': 'Falha de rede. Confira sua conexão.',
-          'auth/operation-not-allowed': 'Login por e-mail/senha não está habilitado no Firebase Authentication.'
+          'auth/operation-not-allowed': 'Login por e-mail/senha não está habilitado no Firebase Authentication.',
+          'auth/invalid-email': 'Informe o e-mail completo cadastrado no Xabuia.'
         };
         showToast(map[code] || error.message || 'Erro ao entrar no Xabuia.', 'error');
       } finally {
@@ -990,7 +1075,12 @@
 
   async function sendPasswordResetFromPanel() {
     const { email } = readEmailLoginFields();
-    if (!email) { $('#xabuia-email-login')?.focus(); showToast('Informe o e-mail para enviar o link de senha.', 'error'); return; }
+    const emailField = $('#xabuia-email-login');
+    if (!email || emailField?.dataset.xabuiaManual !== '1' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      emailField?.focus();
+      showToast('Digite o e-mail completo cadastrado no Xabuia para recuperar a senha.', 'error');
+      return;
+    }
 
     const btn = $('#xabuia-reset-password');
     const originalText = btn?.textContent || 'Definir/recuperar senha';
@@ -1186,7 +1276,7 @@
     observer.observe(document.body, { childList: true, subtree: true });
     window.addEventListener('focus', scanCards);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) scanCards(); });
-    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Login híbrido: Google estilo 3.0 + e-mail/senha + botão sair.`);
+    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Login Xabuia independente do autofill InfraDesk; Google + e-mail/senha.`);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
