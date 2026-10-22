@@ -32,13 +32,19 @@
 
       <form id="authForm" class="stack">
         <label id="nameField" class="field hidden">
-          <span>Usuário</span>
+          <span>Nome completo</span>
           <input id="displayNameInput" autocomplete="name" placeholder="Ex.: Josiscreusa Maria" />
         </label>
 
+        <label id="registerUsernameWrap" class="field hidden">
+          <span>Usuário Xabuia</span>
+          <input id="registerUsernameInput" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="32" placeholder="Ex.: elias.araujo" />
+          <small>Você pode usar o mesmo login do InfraDesk. A senha é independente.</small>
+        </label>
+
         <label class="field">
-          <span>E-mail</span>
-          <input id="emailInput" type="email" autocomplete="email" placeholder="seu@email.com" required />
+          <span id="emailFieldLabel">Usuário ou e-mail</span>
+          <input id="emailInput" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="elias.araujo ou seu@email.com" required />
         </label>
 
         <label class="field">
@@ -80,6 +86,12 @@
         </label>
 
         <label class="field">
+          <span>Usuário Xabuia (login curto)</span>
+          <input id="onboardingUsernameInput" autocomplete="off" autocapitalize="none" maxlength="32" placeholder="Ex.: elias.araujo" />
+          <small>Use o mesmo nome de login do InfraDesk, se quiser. Não copia a senha.</small>
+        </label>
+
+        <label class="field">
           <span>Organização</span>
           <select id="onboardingOrgSelect" required></select>
         </label>
@@ -118,9 +130,23 @@
         <button id="adminQueryActiveBtn" class="btn primary hidden" type="button">Consultar por filtros</button>
         <button id="adminClearQueryBtn" class="btn ghost hidden" type="button">Limpar consulta</button>
         <button id="adminBtn" class="btn ghost hidden" type="button">Admin</button>
+        <button id="xabuiaUsernameBtn" class="btn ghost" type="button">Meu usuário</button>
+        <button id="xabuiaSoundBtn" class="btn ghost" type="button">🔊 Ativar som</button>
+        <button id="xabuiaAlertsBtn" class="btn ghost" type="button">🔔 Avisos <strong id="xabuiaUnreadCount">0</strong></button>
         <button id="logoutBtn" class="btn ghost" type="button">Sair</button>
       </div>
     </header>
+
+    <dialog id="xabuiaAlertsDialog" class="modal">
+      <div class="modal-card">
+        <div class="section-head">
+          <h2>🔔 Avisos do Xabuia</h2>
+          <button type="button" class="icon-btn" data-close-dialog="xabuiaAlertsDialog">×</button>
+        </div>
+        <p class="muted">Som e avisos enquanto o site estiver aberto. Acompanhe respostas de outros usuários.</p>
+        <div id="xabuiaAlertsList" class="xabuia-alerts-list"></div>
+      </div>
+    </dialog>
 
     <section class="toolbar card toolbar-v12">
       <div class="field grow search-field">
