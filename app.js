@@ -10,7 +10,8 @@ import {
   GoogleAuthProvider,
   sendPasswordResetEmail,
   updateProfile,
-  signOut
+  signOut,
+  signInWithCustomToken
 } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js';
 import {
   getFirestore,
@@ -36,6 +37,7 @@ import {
   uploadBytes,
   getDownloadURL
 } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-storage.js';
+import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-functions.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyADfd6RhNN6rj6qX1judbjevvh-ZwMwmJE',
@@ -46,7 +48,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V32-anexos-painel';
+const APP_VERSION = 'V33-login-usuario-alertas';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -141,6 +143,9 @@ auth.languageCode = 'pt-BR';
 const db = getFirestore(app);
 const storage = getStorage(app);
 const googleProvider = new GoogleAuthProvider();
+const functions = getFunctions(app, 'us-central1');
+const entrarPorUsuario = httpsCallable(functions, 'entrarPorUsuario');
+const definirUsuario = httpsCallable(functions, 'definirUsuario');
 
 const $ = (id) => document.getElementById(id);
 
@@ -155,6 +160,16 @@ const els = {
   authForm: $('authForm'),
   nameField: $('nameField'),
   displayNameInput: $('displayNameInput'),
+  registerUsernameWrap: $('registerUsernameWrap'),
+  registerUsernameInput: $('registerUsernameInput'),
+  emailFieldLabel: $('emailFieldLabel'),
+  onboardingUsernameInput: $('onboardingUsernameInput'),
+  xabuiaUsernameBtn: $('xabuiaUsernameBtn'),
+  xabuiaSoundBtn: $('xabuiaSoundBtn'),
+  xabuiaAlertsBtn: $('xabuiaAlertsBtn'),
+  xabuiaUnreadCount: $('xabuiaUnreadCount'),
+  xabuiaAlertsDialog: $('xabuiaAlertsDialog'),
+  xabuiaAlertsList: $('xabuiaAlertsList'),
   emailInput: $('emailInput'),
   passwordInput: $('passwordInput'),
   authSubmitBtn: $('authSubmitBtn'),
@@ -270,7 +285,11 @@ const state = {
   searchToken: 0,
   filterTimer: null,
   filterToken: 0,
-  historyLoadedFor: null
+  historyLoadedFor: null,
+  loginHandleDraft: '',
+  notifications: [],
+  soundContext: null,
+  soundAllowed: false
 };
 
 const BASE_DOCUMENT_TITLE = document.title || 'Xabuia 1.0';
@@ -1395,8 +1414,161 @@ function mergeTicketBuckets() {
   }
 }
 
+
+// V33: login curto vinculado ao UID Firebase por Cloud Functions, nunca ao login InfraDesk.
+function normalizeXabuiaUsername(value) {
+  const username = String(value || '').trim().toLowerCase();
+  return /^[a-z][a-z0-9._-]{2,31}$/.test(username) ? username : '';
+}
+
+async function claimMyUsername(value, quiet = false) {
+  const usuario = normalizeXabuiaUsername(value);
+  if (!usuario) throw new Error('O usuário deve ter 3 a 32 caracteres: letras sem acento, números, ponto, _ ou -.');
+  const result = await definirUsuario({ usuario });
+  if (state.profile && state.user?.uid === result.data?.uid) state.profile.usuario = usuario;
+  if (!quiet) showToast(`Login curto ${usuario} vinculado à sua conta Xabuia.`, 'success');
+  return usuario;
+}
+
+function noticeStoreKey() { return `xabuia_avisos_v33_${state.user?.uid || 'anon'}`; }
+function soundPrefKey() { return `xabuia_som_v33_${state.user?.uid || 'anon'}`; }
+function readSoundPref() { return !!state.user && localStorage.getItem(soundPrefKey()) === '1'; }
+function eventTimestampMs(ticket) { return timestampMillis(ticket.ultimaOcorrenciaEm || ticket.atualizadoEm); }
+function eventIdentity(ticket) {
+  return `${ticket.id}|${eventTimestampMs(ticket)}|${ticket.ultimaOcorrenciaUsuarioId || ''}|${ticket.status || ''}|${ticket.ultimaOcorrenciaTexto || ''}`;
+}
+function ticketNoticeColor(status) {
+  if (['finalizado'].includes(status)) return 'green';
+  if (['devolver_recusar', 'informacoes_divergentes'].includes(status)) return 'red';
+  if (['reaberto', 'em_tratamento'].includes(status)) return 'amber';
+  return 'blue';
+}
+function setAlertStore() {
+  try { localStorage.setItem(noticeStoreKey(), JSON.stringify(state.notifications.slice(0, 50))); } catch (_) {}
+}
+function updateNoticeButton() {
+  const unread = state.notifications.filter((notice) => !notice.lida).length;
+  if (els.xabuiaUnreadCount) els.xabuiaUnreadCount.textContent = String(unread);
+  if (els.xabuiaAlertsBtn) els.xabuiaAlertsBtn.classList.toggle('xabuia-has-alerts', unread > 0);
+  if (els.xabuiaSoundBtn) els.xabuiaSoundBtn.textContent = readSoundPref() ? '🔊 Som ligado' : '🔇 Ativar som';
+}
+function loadMyNotices() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(noticeStoreKey()) || '[]');
+    state.notifications = Array.isArray(parsed) ? parsed.slice(0, 50) : [];
+  } catch (_) { state.notifications = []; }
+  updateNoticeButton();
+}
+function soundContext() {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return null;
+  if (!state.soundContext) state.soundContext = new AudioCtor();
+  return state.soundContext;
+}
+async function unlockNotificationSound() {
+  try { await soundContext()?.resume(); } catch (_) {}
+}
+function beepXabuia() {
+  if (!readSoundPref()) return;
+  try {
+    const context = soundContext();
+    if (!context || context.state !== 'running') return;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(784, context.currentTime);
+    oscillator.frequency.setValueAtTime(1046, context.currentTime + .12);
+    gain.gain.setValueAtTime(.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(.10, context.currentTime + .02);
+    gain.gain.exponentialRampToValueAtTime(.0001, context.currentTime + .34);
+    oscillator.connect(gain); gain.connect(context.destination);
+    oscillator.start(); oscillator.stop(context.currentTime + .35);
+  } catch (error) { console.warn('[Xabuia] Som não disponível:', error); }
+}
+function webNotificationXabuia(notice) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification('🔔 Xabuia • Retorno do chamado', {
+      body: notice.texto, icon: './xabuia.png', tag: `xabuia-${notice.id}`
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch (_) {}
+}
+function notifyNewTicketEvent(ticket) {
+  if (!state.user || !ticket?.id) return;
+  const author = ticket.ultimaOcorrenciaUsuarioId || ticket.criadoPor || '';
+  if (!author || author === state.user.uid) return;
+  if (!isOperator() && !(ticket.solicitantesIds || []).includes(state.user.uid)) return;
+  const marker = eventIdentity(ticket);
+  if (state.notifications.some((n) => n.id === marker)) return;
+  const texto = String(ticket.ultimaOcorrenciaTexto || `Status: ${ticket.status || 'aberto'}`).slice(0, 220);
+  const notice = { id: marker, ticketId: ticket.id, status: ticket.status || 'aberto', texto, at: Date.now(), lida: false };
+  state.notifications.unshift(notice);
+  state.notifications = state.notifications.slice(0, 50);
+  setAlertStore(); updateNoticeButton();
+  beepXabuia(); webNotificationXabuia(notice);
+  showToast(`🔔 Retorno Xabuia: ${texto.slice(0, 75)}`, 'success');
+  renderTickets();
+}
+function renderMyNotices() {
+  if (!els.xabuiaAlertsList) return;
+  els.xabuiaAlertsList.innerHTML = state.notifications.length
+    ? state.notifications.map((n) => `
+      <button type="button" class="xabuia-alert-item xabuia-alert-${ticketNoticeColor(n.status)}"
+         data-xabuia-alert-ticket="${escapeHtml(n.ticketId)}">
+        <strong>${escapeHtml(STATUS_LABELS[n.status] || n.status || 'Chamado')}</strong>
+        <small>${new Date(n.at).toLocaleString('pt-BR')}</small>
+        <span>${escapeHtml(n.texto)}</span>
+      </button>`).join('')
+    : '<p class="muted">Nenhum aviso novo neste navegador.</p>';
+}
+async function toggleXabuiaSound() {
+  if (!state.user) return;
+  const next = !readSoundPref();
+  localStorage.setItem(soundPrefKey(), next ? '1' : '0');
+  if (next) {
+    await unlockNotificationSound();
+    if ('Notification' in window && Notification.permission === 'default') {
+      try { await Notification.requestPermission(); } catch (_) {}
+    }
+    beepXabuia();
+  }
+  updateNoticeButton();
+}
+function showMyNotices() {
+  renderMyNotices();
+  state.notifications.forEach((n) => { n.lida = true; });
+  setAlertStore(); updateNoticeButton();
+  els.xabuiaAlertsDialog?.showModal();
+}
+async function chooseMyUsername() {
+  if (!state.user) return;
+  if (state.profile?.usuario) {
+    showToast(`Seu usuário é ${state.profile.usuario}. Para evitar duplicidades, alteração exige administração.`, 'success');
+    return;
+  }
+  const value = window.prompt('Escolha seu usuário Xabuia (pode ser igual ao InfraDesk):', '');
+  if (value == null) return;
+  try { await claimMyUsername(value); } catch (error) {
+    showToast(`Não foi possível definir o usuário: ${error?.message || 'verifique se as Cloud Functions já foram implantadas.'}`, 'error');
+  }
+}
+
 function listenTicketBucket(name, q) {
+  // Não anuncia o snapshot inicial nem itens antigos reapresentados pelo Firestore.
+  let initialSnapshot = true;
+  const subscribedAt = Date.now();
   return onSnapshot(q, (snapshot) => {
+    if (!initialSnapshot && !snapshot.metadata.hasPendingWrites) {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'removed') return;
+        const ticket = { id: change.doc.id, ...change.doc.data() };
+        const time = eventTimestampMs(ticket);
+        // Só mudanças ocorridas depois do início do monitor, sem tocar em dados históricos.
+        if (time && time >= subscribedAt - 1500) notifyNewTicketEvent(ticket);
+      });
+    }
+    initialSnapshot = false;
     state.ticketBuckets[name] = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
     mergeTicketBuckets();
   }, (error) => {
@@ -1880,7 +2052,7 @@ function renderTickets() {
     const tipo = ticket.tipoChamado || 'nota_fiscal';
     const status = ticket.status || 'aberto';
     return `
-      <article class="ticket-item ticket-item-v30 ticket-framed ticket-status-${escapeHtml(status)} ${ticket.id === state.selectedTicketId ? 'active' : ''}" data-ticket-id="${escapeHtml(ticket.id)}" role="button" tabindex="0">
+      <article class="ticket-item ticket-item-v30 ticket-framed ticket-status-${escapeHtml(status)} ${ticket.id === state.selectedTicketId ? 'active' : ''} ${state.notifications.some((n) => n.ticketId === ticket.id && !n.lida) ? 'xabuia-unread-ticket' : ''}" data-ticket-id="${escapeHtml(ticket.id)}" role="button" tabindex="0">
         <div class="ticket-type-legend">${escapeHtml(ticketTypeLabel(tipo))}</div>
 
         <div class="ticket-card-head-v30">
@@ -3154,6 +3326,7 @@ function renderApp() {
   els.ticketOrgWrap?.classList.toggle('hidden', !isOperatorOrAdmin());
   els.productOrgWrap?.classList.toggle('hidden', !isOperatorOrAdmin());
   showOnly(els.appView);
+  loadMyNotices();
   renderOrgSelects();
   ensureMainDates();
   startTicketsListener();
@@ -3187,7 +3360,7 @@ function renderAdmin() {
       <div class="mini-item-head">
         <div>
           <strong>${escapeHtml(user.nome || user.email)}</strong><br>
-          <small class="muted">${escapeHtml(user.email || '')}</small><br>
+          <small class="muted">${user.usuario ? '@' + escapeHtml(user.usuario) + ' • ' : 'Sem usuário curto • '}${escapeHtml(user.email || '')}</small><br>
           <small class="muted">${escapeHtml(user.organizacaoNome || 'Todas as organizações')}</small>
         </div>
         <span class="pill">${user.ativo === false ? 'Banido' : roleLabel(user.papel)}</span>
@@ -3682,6 +3855,12 @@ async function completeOnboarding(event) {
   await setDoc(doc(db, 'usuarios', state.user.uid), data);
   if (state.user.displayName !== nome) await updateProfile(state.user, { displayName: nome });
   state.profile = { id: state.user.uid, ...data };
+  const desiredUsername = String(els.onboardingUsernameInput?.value || state.loginHandleDraft || '').trim();
+  if (desiredUsername) {
+    try { await claimMyUsername(desiredUsername, true); }
+    catch (error) { showToast('Conta criada, mas o login curto ainda não foi vinculado. Use Meu usuário depois de publicar as Cloud Functions.', 'error'); }
+  }
+  state.loginHandleDraft = '';
   renderApp();
 }
 
@@ -3691,6 +3870,14 @@ function setAuthMode(mode) {
   els.tabLogin.classList.toggle('active', !isRegister);
   els.tabRegister.classList.toggle('active', isRegister);
   els.nameField.classList.toggle('hidden', !isRegister);
+  els.registerUsernameWrap?.classList.toggle('hidden', !isRegister);
+  if (els.registerUsernameInput) els.registerUsernameInput.required = isRegister;
+  if (els.emailInput) {
+    els.emailInput.type = isRegister ? 'email' : 'text';
+    els.emailInput.autocomplete = isRegister ? 'email' : 'username';
+    els.emailInput.placeholder = isRegister ? 'seu@email.com' : 'elias.araujo ou seu@email.com';
+  }
+  if (els.emailFieldLabel) els.emailFieldLabel.textContent = isRegister ? 'E-mail (recuperação da senha)' : 'Usuário ou e-mail';
   els.authSubmitBtn.textContent = isRegister ? 'Criar conta' : 'Entrar';
   els.passwordInput.autocomplete = isRegister ? 'new-password' : 'current-password';
 }
@@ -3703,10 +3890,14 @@ async function submitAuth(event) {
 
   try {
     if (state.mode === 'register') {
-      if (!displayName) return showToast('Informe o usuário.', 'error');
+      if (!displayName) return showToast('Informe seu nome.', 'error');
+      const handle = normalizeXabuiaUsername(els.registerUsernameInput?.value);
+      if (!handle) return showToast('Informe um usuário curto válido (3–32 caracteres, sem espaços).', 'error');
+      state.loginHandleDraft = handle;
 
       try {
         const cred = await createUserWithEmailAndPassword(auth, email, password);
+        if (els.onboardingUsernameInput) els.onboardingUsernameInput.value = handle;
         await updateProfile(cred.user, { displayName });
         showToast('Conta criada. Agora escolha a organização.', 'success');
       } catch (error) {
@@ -3724,10 +3915,22 @@ async function submitAuth(event) {
         }
       }
     } else {
-      await signInWithEmailAndPassword(auth, email, password);
+      if (email.includes('@')) {
+        await signInWithEmailAndPassword(auth, email, password);
+      } else {
+        const usuario = normalizeXabuiaUsername(email);
+        if (!usuario) return showToast('Informe o login curto válido ou um e-mail completo.', 'error');
+        const result = await entrarPorUsuario({ usuario, senha: password });
+        const token = result?.data?.customToken;
+        if (!token) throw new Error('A função de login não retornou uma autenticação válida.');
+        await signInWithCustomToken(auth, token);
+      }
     }
   } catch (error) {
-    showToast(authErrorMessage(error), 'error');
+    const unavailable = /unavailable|not-found|internal/i.test(String(error?.code || ''));
+    showToast(unavailable && !email.includes('@')
+      ? 'Login curto indisponível. Publique as Cloud Functions ou entre com o e-mail completo.'
+      : authErrorMessage(error), 'error');
   }
 }
 
@@ -3745,9 +3948,9 @@ async function loginWithGoogle() {
 
 async function resetPassword() {
   const email = normalizeKey(els.emailInput.value);
-  if (!email) {
+  if (!email || !email.includes('@')) {
     els.emailInput.focus();
-    return showToast('Digite o e-mail primeiro para enviar o link de senha.', 'error');
+    return showToast('Para recuperar a senha, informe seu e-mail completo cadastrado, não o login curto.', 'error');
   }
 
   try {
@@ -4035,6 +4238,8 @@ onAuthStateChanged(auth, async (user) => {
   state.tickets = [];
   state.users = [];
   state.selectedTicketId = null;
+  state.notifications = [];
+  updateNoticeButton();
 
   if (!user) {
     showOnly(els.authView);
@@ -4047,6 +4252,7 @@ onAuthStateChanged(auth, async (user) => {
 
     if (!profile) {
       els.onboardingNameInput.value = user.displayName || '';
+      if (els.onboardingUsernameInput) els.onboardingUsernameInput.value = state.loginHandleDraft || '';
       showOnly(els.onboardingView);
       startOrgListener();
       return;
@@ -4078,6 +4284,10 @@ onAuthStateChanged(auth, async (user) => {
 els.tabLogin.addEventListener('click', () => setAuthMode('login'));
 els.tabRegister.addEventListener('click', () => setAuthMode('register'));
 els.authForm.addEventListener('submit', submitAuth);
+els.xabuiaUsernameBtn?.addEventListener('click', chooseMyUsername);
+els.xabuiaSoundBtn?.addEventListener('click', toggleXabuiaSound);
+els.xabuiaAlertsBtn?.addEventListener('click', showMyNotices);
+document.addEventListener('click', () => { if (readSoundPref()) unlockNotificationSound(); }, { passive: true });
 els.googleBtn.addEventListener('click', loginWithGoogle);
 els.resetPasswordBtn.addEventListener('click', resetPassword);
 els.logoutBtn.addEventListener('click', logout);
@@ -4177,6 +4387,15 @@ document.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
     reserveTicket(reserveButton.dataset.reserveTicketId);
+    return;
+  }
+
+  const noticeTicketButton = event.target.closest?.('[data-xabuia-alert-ticket]');
+  if (noticeTicketButton) {
+    els.xabuiaAlertsDialog?.close();
+    const id = noticeTicketButton.dataset.xabuiaAlertTicket;
+    if (state.tickets.some((t) => t.id === id)) selectTicket(id);
+    else showToast('O chamado não está na sua lista atual. Ajuste os filtros para localizá-lo.', 'error');
     return;
   }
 
