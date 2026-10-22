@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.16
+// @version      3.2.17
 // @description  Xabuia Infradesk compatível com outros aplicativos Firebase na mesma página, login híbrido e modo econômico.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados/painel*
@@ -31,7 +31,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.16-correcao-som-infradesk';
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.17-login-google-sdk-isolado';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_BLIN_URL = 'https://chamadossicofe-design.github.io/xabuia/blin.mp3';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
@@ -291,22 +291,54 @@
   /********************************************************************
    * FIREBASE
    ********************************************************************/
-  // O Comercial usa um Firebase NOMEADO. Por isso, firebase.apps.length pode ser
-  // maior que zero mesmo quando o aplicativo padrão [DEFAULT] do Xabuia ainda
-  // não existe. Consultamos o padrão diretamente e só o criamos quando faltar.
-  // Assim Xabuia e Comercial podem iniciar em qualquer ordem na mesma página.
+  // V3.2.17: congelamos a referência ao SDK compat que foi carregado pelo Loader.
+  // O InfraDesk e outras extensões podem sobrescrever window.firebase DEPOIS do
+  // carregamento, gerando um provedor de outra cópia do SDK e auth/argument-error.
+  // IMPORTANTÍSSIMO: Auth e GoogleAuthProvider devem vir da MESMA referência.
+  const xabuiaFirebaseSDK = firebase;
+  const XabuiaGoogleAuthProvider = xabuiaFirebaseSDK.auth.GoogleAuthProvider;
+  const XABUIA_NAMED_APP = 'xabuia-chamadossicofe';
+
+  function isCorrectXabuiaFirebaseApp(candidate) {
+    return Boolean(candidate && candidate.options
+      && candidate.options.projectId === firebaseConfig.projectId
+      && candidate.options.appId === firebaseConfig.appId);
+  }
+
   function getXabuiaFirebaseApp() {
-    try {
-      return firebase.app();
-    } catch (_) {
-      return firebase.initializeApp(firebaseConfig);
+    let defaultApp = null;
+    try { defaultApp = xabuiaFirebaseSDK.app(); } catch (_) {}
+
+    // Mantém a instância padrão do próprio Xabuia, incluindo a sessão que já
+    // estava gravada nos navegadores. NÃO forçamos ninguém a refazer login.
+    if (isCorrectXabuiaFirebaseApp(defaultApp)) return defaultApp;
+
+    // Quando não existe [DEFAULT], conservamos o comportamento anterior.
+    if (!defaultApp) return xabuiaFirebaseSDK.initializeApp(firebaseConfig);
+
+    // Outra aplicação ocupa [DEFAULT]: cria uma aplicação com nome exclusivo.
+    // Nunca reutiliza acidentalmente Firebase de outro projeto.
+    let named = null;
+    try { named = xabuiaFirebaseSDK.app(XABUIA_NAMED_APP); } catch (_) {}
+    if (named) {
+      if (!isCorrectXabuiaFirebaseApp(named)) {
+        throw new Error('[Xabuia] Configuração divergente na instância Firebase nomeada.');
+      }
+      return named;
     }
+    return xabuiaFirebaseSDK.initializeApp(firebaseConfig, XABUIA_NAMED_APP);
   }
 
   const app = getXabuiaFirebaseApp();
-  const auth = firebase.auth(app);
-  const db = firebase.firestore(app);
+  const auth = xabuiaFirebaseSDK.auth(app);
+  const db = xabuiaFirebaseSDK.firestore(app);
   auth.languageCode = 'pt-BR';
+  console.info('[Xabuia Google] Firebase inicializado:', {
+    sdkVersion: xabuiaFirebaseSDK.SDK_VERSION || 'compat',
+    appName: app.name,
+    projectId: app.options?.projectId,
+    authAppName: auth.app?.name
+  });
 
   auth.onAuthStateChanged((user) => {
     state.authReady = true;
@@ -1128,20 +1160,73 @@
     }
   }
 
-  async function loginGoogle() {
-    // V3.2.9: fluxo Google propositalmente igual ao 3.0.
-    // Popup simples, chamado direto pelo clique do botão, sem redirect e sem trava intermediária.
+  function xabuiaGoogleErrorMessage(error) {
+    const errors = {
+      'auth/argument-error': 'O navegador misturou referências do Firebase. Confira [Xabuia Google] no Console (F12).',
+      'auth/popup-blocked': 'O navegador bloqueou a janela Google. Libere pop-ups para o InfraDesk e tente novamente.',
+      'auth/popup-closed-by-user': 'A janela Google foi fechada antes de concluir o login.',
+      'auth/cancelled-popup-request': 'Já havia uma tentativa de login Google em andamento. Tente novamente.',
+      'auth/unauthorized-domain': 'Domínio do InfraDesk não autorizado no Firebase Authentication.',
+      'auth/operation-not-allowed': 'O provedor Google não está habilitado no Firebase Authentication.',
+      'auth/network-request-failed': 'Falha de rede ao conectar Google. Confira a conexão.',
+      'auth/web-storage-unsupported': 'O navegador bloqueou o armazenamento necessário ao login Google.',
+      'auth/operation-not-supported-in-this-environment': 'Este navegador ou ambiente não permite popup de autenticação.'
+    };
+    return errors[error?.code] || error?.message || 'Erro ao conectar Google.';
+  }
+
+  function loginGoogle() {
+    // Chamada IMEDIATA no clique (sem awaits/timers antes do popup): impede
+    // bloqueio por perda da ativação de usuário no Chrome/Tampermonkey.
+    if (loginGoogle.inProgress) return loginGoogle.inProgress;
+
+    const button = $('#xabuia-google-redirect');
     try {
-      const provider = new firebase.auth.GoogleAuthProvider();
-      await auth.signInWithPopup(provider);
-      await loadProfileIfNeeded(true);
-      renderAuthInfo();
-      showToast('Conta Google conectada.', 'success');
+      const provider = new XabuiaGoogleAuthProvider();
+      if (provider.providerId !== 'google.com') throw new Error('Provedor Google Firebase inválido.');
+      // Sempre oferecer seleção de conta ao clicar em Conectar Google.
+      provider.setCustomParameters({ prompt: 'select_account' });
+      console.info('[Xabuia Google] Abrindo login:', {
+        sdkVersion: xabuiaFirebaseSDK.SDK_VERSION || 'compat',
+        firebaseApp: app.name,
+        provider: provider.providerId,
+        page: location.hostname,
+        sdkGlobalChanged: window.firebase !== xabuiaFirebaseSDK
+      });
+      if (button) button.disabled = true;
+
+      // NÃO alterar: deve ocorrer imediatamente após o clique.
+      const popupPromise = auth.signInWithPopup(provider);
+      loginGoogle.inProgress = popupPromise.then(async () => {
+        await loadProfileIfNeeded(true);
+        renderAuthInfo();
+        showToast('Conta Google conectada.', 'success');
+      }).catch((error) => {
+        console.error('[Xabuia Google] Falha na autenticação:', {
+          code: error?.code || 'sem-codigo',
+          message: error?.message || '',
+          firebaseApp: app.name,
+          sdkGlobalChanged: window.firebase !== xabuiaFirebaseSDK,
+          stack: error?.stack || ''
+        });
+        showToast(xabuiaGoogleErrorMessage(error), 'error');
+      }).finally(() => {
+        loginGoogle.inProgress = null;
+        const current = $('#xabuia-google-redirect');
+        if (current) current.disabled = false;
+      });
+      return loginGoogle.inProgress;
     } catch (error) {
-      const message = error?.code === 'auth/unauthorized-domain'
-        ? 'Domínio do Infradesk não autorizado no Firebase Authentication.'
-        : (error.message || 'Erro ao conectar Google.');
-      showToast(message, 'error');
+      console.error('[Xabuia Google] Falha antes de abrir popup:', {
+        code: error?.code || 'sem-codigo',
+        message: error?.message || '',
+        firebaseApp: app.name,
+        sdkGlobalChanged: window.firebase !== xabuiaFirebaseSDK,
+        stack: error?.stack || ''
+      });
+      if (button) button.disabled = false;
+      showToast(xabuiaGoogleErrorMessage(error), 'error');
+      return Promise.resolve();
     }
   }
 
@@ -1172,7 +1257,7 @@
   }
 
   function ticketStatusPayload(status) {
-    const now = firebase.firestore.FieldValue.serverTimestamp();
+    const now = xabuiaFirebaseSDK.firestore.FieldValue.serverTimestamp();
     const payload = { status, atualizadoEm: now };
     if (status === 'em_tratamento') { payload.operadorTratamentoId = state.user.uid; payload.operadorTratamentoNome = selectedUserName(); payload.operadorTratamentoEmail = state.user.email; payload.tratamentoIniciadoEm = now; }
     if (['aberto', 'reaberto'].includes(status)) { payload.operadorTratamentoId = null; payload.operadorTratamentoNome = null; payload.operadorTratamentoEmail = null; payload.tratamentoIniciadoEm = null; }
@@ -1180,7 +1265,7 @@
     return payload;
   }
   function lastOccurrencePayload(texto, tipo) {
-    const now = firebase.firestore.FieldValue.serverTimestamp();
+    const now = xabuiaFirebaseSDK.firestore.FieldValue.serverTimestamp();
     return { ultimaOcorrenciaTexto: texto, ultimaOcorrenciaTipo: tipo, ultimaOcorrenciaUsuarioId: state.user.uid, ultimaOcorrenciaUsuarioNome: selectedUserName(), ultimaOcorrenciaUsuarioEmail: state.user.email, ultimaOcorrenciaEm: now, atualizadoEm: now };
   }
   function historyTypeForStatus(status, existsBefore, previousStatus = '') {
@@ -1240,8 +1325,8 @@
       const previousStatus = previousTicket?.status || '';
       const finalStatus = statusAfterInfradeskOccurrence(exists, previousStatus);
       const historyType = historyTypeForStatus(finalStatus, exists, previousStatus);
-      const now = firebase.firestore.FieldValue.serverTimestamp();
-      const requester = firebase.firestore.FieldValue.arrayUnion(state.user.uid);
+      const now = xabuiaFirebaseSDK.firestore.FieldValue.serverTimestamp();
+      const requester = xabuiaFirebaseSDK.firestore.FieldValue.arrayUnion(state.user.uid);
 
       if (!exists) {
         await ref.set({
@@ -1548,7 +1633,7 @@
     observer.observe(document.body, { childList: true, subtree: true });
     window.addEventListener('focus', scanCards);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) scanCards(); });
-    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Login Xabuia independente do autofill InfraDesk; Google + e-mail/senha.`);
+    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Login Google usa SDK capturado, sem misturar provedores Firebase; mantém e-mail/senha e notificações.`);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
