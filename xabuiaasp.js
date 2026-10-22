@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.12
+// @version      3.2.13
 // @description  Xabuia Infradesk compatível com outros aplicativos Firebase na mesma página, login híbrido e modo econômico.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados/painel*
@@ -15,6 +15,7 @@
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js
+// @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-functions-compat.js
 // ==/UserScript==
 
 (function () {
@@ -31,7 +32,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.12-firebase-coexistencia';
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.13-login-curto-alertas';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
   const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
@@ -305,6 +306,7 @@
   const app = getXabuiaFirebaseApp();
   const auth = firebase.auth(app);
   const db = firebase.firestore(app);
+  const tmFunctions = app.functions('us-central1');
   auth.languageCode = 'pt-BR';
 
   auth.onAuthStateChanged((user) => {
@@ -327,6 +329,7 @@
 
     renderAuthInfo();
     scanCards();
+    refreshTmNotificationsForUser();
   });
 
   // V3.2.9: login principal por e-mail/senha sem popup. Google redirect mantido como opção secundária: o login Google do Tampermonkey passa a usar redirecionamento direto.
@@ -384,6 +387,7 @@
         const snap = await db.collection('usuarios').doc(state.user.uid).get();
         state.profile = snap.exists ? { id: snap.id, ...snap.data() } : null;
         writeCachedProfile(state.user.uid, state.profile);
+        refreshTmNotificationsForUser();
         return state.profile;
       } catch (error) {
         console.warn('[Xabuia] Erro ao carregar perfil:', error);
@@ -732,6 +736,19 @@
       .xabuia-box{clear:both;margin:9px 0 10px;padding:0;border:1px solid rgba(21,94,239,.18);background:#fff;border-radius:12px;color:#172033;font-size:12px;line-height:1.35;overflow:hidden;box-shadow:0 10px 22px rgba(15,23,42,.10)}.xabuia-box-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;font-weight:900;color:#fff;background:linear-gradient(135deg,#155eef,#7c3aed)}.xabuia-box-title{display:inline-flex;align-items:center;gap:6px;min-width:0}.xabuia-box-title img{width:18px;height:18px;border-radius:5px;flex:0 0 auto}.xabuia-chip{display:inline-flex;align-items:center;border-radius:999px;padding:2px 7px;font-size:10px;font-weight:900;background:rgba(255,255,255,.96);color:#1d4ed8;border:1px solid rgba(255,255,255,.65);white-space:nowrap}.xabuia-box-body{padding:8px 9px 9px;background:#f8fafc;border-left:4px solid #155eef}.xabuia-last-text{margin-top:3px;padding:6px 7px;border-radius:9px;background:#fff;border:1px solid #e2e8f0;color:#334155;overflow-wrap:anywhere;white-space:pre-wrap}.xabuia-box small{color:#64748b;display:block;margin-top:5px}.xabuia-box.xabuia-status-reaberto .xabuia-box-head{background:linear-gradient(135deg,#f59e0b,#ea580c)}.xabuia-box.xabuia-status-em_tratamento .xabuia-box-head{background:linear-gradient(135deg,#b54708,#f97316)}.xabuia-box.xabuia-status-finalizado .xabuia-box-head{background:linear-gradient(135deg,#067647,#12b76a)}.xabuia-box.xabuia-status-informacoes_divergentes .xabuia-box-head,.xabuia-box.xabuia-status-devolver_recusar .xabuia-box-head{background:linear-gradient(135deg,#b42318,#ef4444)}
       .xabuia-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:999999;display:none;align-items:center;justify-content:center;padding:20px}.xabuia-overlay.open{display:flex}.xabuia-modal{width:min(520px,calc(100vw - 32px));background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.22);overflow:hidden;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.xabuia-modal-head{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid #e5e7eb}.xabuia-modal-head img{width:42px;height:42px;border-radius:12px}.xabuia-modal-head h3{margin:0;font-size:18px;color:#172033}.xabuia-modal-head p{margin:2px 0 0;color:#687386;font-size:12px}.xabuia-close{margin-left:auto;border:0;border-radius:10px;background:#f1f5f9;width:34px;height:34px;font-size:18px;line-height:1}.xabuia-modal-body{padding:18px;display:grid;gap:12px}.xabuia-info{border:1px solid #dbeafe;background:#eff6ff;color:#1e3a8a;padding:10px 12px;border-radius:12px;font-size:12px}.xabuia-field{display:grid;gap:6px}.xabuia-field label{font-weight:800;color:#687386;font-size:12px}.xabuia-field textarea{min-height:105px;width:100%;border:1px solid #dfe7f0;border-radius:12px;padding:10px 12px;outline:none;resize:vertical;color:#172033}.xabuia-actions{display:flex;gap:8px;justify-content:flex-end;padding:0 18px 18px}.xabuia-btn{border:0;border-radius:12px;padding:10px 14px;font-weight:800;min-height:40px}.xabuia-btn.primary{background:#155eef;color:#fff}.xabuia-btn.ghost{background:#f8fafc;border:1px solid #dfe7f0;color:#172033}.xabuia-btn:disabled{opacity:.6;cursor:not-allowed}.xabuia-authbar{padding:10px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:12px}.xabuia-authbar.ok{background:#ecfdf3;color:#067647;border-color:#bbf7d0}.xabuia-login-panel{display:none;border:1px solid #dbeafe;background:#f8fafc;border-radius:12px;padding:10px 12px;gap:8px}.xabuia-login-panel.open{display:grid}.xabuia-login-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.xabuia-login-field{display:grid;gap:5px}.xabuia-login-field label{font-weight:900;color:#687386;font-size:11px}.xabuia-login-field input{width:100%;border:1px solid #dfe7f0;border-radius:10px;padding:9px 10px;outline:none;color:#172033}.xabuia-login-field input:focus{border-color:#155eef;box-shadow:0 0 0 3px rgba(21,94,239,.12)}.xabuia-login-actions{display:flex;gap:8px;flex-wrap:wrap}.xabuia-login-help{color:#64748b;font-size:11px;line-height:1.35}.xabuia-btn.small{min-height:34px;padding:8px 10px;font-size:12px}@media(max-width:560px){.xabuia-login-grid{grid-template-columns:1fr}}.xabuia-toast{position:fixed;top:18px;right:18px;z-index:1000000;background:#111827;color:#fff;padding:12px 14px;border-radius:12px;box-shadow:0 18px 45px rgba(15,23,42,.18);max-width:min(420px,calc(100vw - 36px));display:none}.xabuia-toast.open{display:block}.xabuia-toast.success{background:#067647}.xabuia-toast.error{background:#b42318}
     `;
+    style.textContent += `
+      .chamado-item[data-xabuia-status="aberto"]{border-left:4px solid #2563eb!important}
+      .chamado-item[data-xabuia-status="reaberto"]{border-left:4px solid #d97706!important}
+      .chamado-item[data-xabuia-status="em_tratamento"]{border-left:4px solid #ea580c!important}
+      .chamado-item[data-xabuia-status="finalizado"]{border-left:4px solid #059669!important}
+      .chamado-item[data-xabuia-status="informacoes_divergentes"],.chamado-item[data-xabuia-status="devolver_recusar"]{border-left:4px solid #dc2626!important}
+      .xabuia-notice-control{position:fixed;bottom:18px;right:18px;z-index:999998;border:1px solid #c7d2fe;border-radius:16px;padding:10px 12px;box-shadow:0 8px 28px rgba(15,23,42,.22);background:#eef2ff;color:#1e40af;font:800 12px system-ui;cursor:pointer}
+      .xabuia-notice-control.is-on{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+      .xabuia-notice-control.has-new{background:#fef3c7;border-color:#f59e0b;color:#92400e}
+      .xabuia-notice-card{outline:3px solid #f59e0b!important;outline-offset:1px;box-shadow:0 0 0 5px rgba(245,158,11,.16)!important}
+      .xabuia-notice-new{border-left:5px solid #f59e0b!important}
+      .xabuia-notice-pop{position:fixed;right:18px;bottom:78px;width:min(390px,calc(100vw - 36px));background:#111827;color:#fff;z-index:999999;padding:13px 16px;border-radius:14px;box-shadow:0 14px 38px rgba(0,0,0,.22);font:13px system-ui}
+    `;
     document.head.appendChild(style);
   }
 
@@ -848,8 +865,8 @@
     $$('.xabuia-box', card).forEach((box) => box.remove());
     delete card.dataset.xabuiaButtonReady;
   }
-  function clearAllCardBoxes() { $$('.xabuia-box').forEach((box) => box.remove()); }
-  function removeCardBox(card) { $('.xabuia-box', card)?.remove(); }
+  function clearAllCardBoxes() { $$('.xabuia-box').forEach((box) => box.remove()); $$('[data-xabuia-status]').forEach((card) => delete card.dataset.xabuiaStatus); }
+  function removeCardBox(card) { $('.xabuia-box', card)?.remove(); if (card) delete card.dataset.xabuiaStatus; }
   function removeCardBoxByChave(chave) {
     if (!chave) return;
     targetCards().forEach((card) => { if (digitsOnly(parseCard(card).chave) === chave) removeCardBox(card); });
@@ -877,6 +894,7 @@
     if (!ticket) { removeCardBox(card); return; }
     const box = ensureCardBox(card);
     const status = ticket.status || 'aberto';
+    card.dataset.xabuiaStatus = String(status);
     const label = STATUS_LABELS[status] || status;
     const histText = escapeHtml(normalizeText(ticket.ultimaOcorrenciaTexto || ticket.ultimoComentario || ticket.ultimaObservacao || 'Chamado aberto no Xabuia.'));
     const histUser = ticket.ultimaOcorrenciaUsuarioNome || ticket.ultimaOcorrenciaUsuarioEmail || '';
@@ -954,11 +972,11 @@
     slot.innerHTML = `
       <div class="xabuia-login-grid">
         <div class="xabuia-login-field">
-          <label for="xabuia-email-login">E-mail do Xabuia</label>
+          <label for="xabuia-email-login">Usuário ou e-mail Xabuia</label>
           <input id="xabuia-email-login" name="xabuia_independent_email"
-                 type="email" inputmode="email" autocomplete="off"
+                 type="text" inputmode="text" autocomplete="off"
                  autocapitalize="off" spellcheck="false" readonly
-                 placeholder="usuario@email.com">
+                 placeholder="elias.araujo ou usuario@email.com">
         </div>
         <div class="xabuia-login-field">
           <label for="xabuia-password-login">Senha do Xabuia</label>
@@ -1031,9 +1049,15 @@
       showToast('Digite seu e-mail do Xabuia. Não use o preenchimento automático do InfraDesk.', 'error');
       return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const isEmail = email.includes('@');
+    if (!isEmail && !/^[a-z][a-z0-9._-]{2,31}$/i.test(email)) {
       emailField?.focus();
-      showToast('O Firebase exige o e-mail completo, como nome@empresa.com.br. O login curto do InfraDesk não funciona aqui.', 'error');
+      showToast('Informe um usuário curto válido ou um e-mail completo.', 'error');
+      return;
+    }
+    if (isEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      emailField?.focus();
+      showToast('Informe o e-mail completo cadastrado no Xabuia.', 'error');
       return;
     }
     if (!password || passwordField?.dataset.xabuiaManual !== '1') {
@@ -1047,7 +1071,14 @@
     loginWithEmailPassword.inProgress = (async () => {
       try {
         if (btn) { btn.disabled = true; btn.textContent = 'Entrando...'; }
-        await auth.signInWithEmailAndPassword(email, password);
+        if (isEmail) {
+          await auth.signInWithEmailAndPassword(email, password);
+        } else {
+          const call = tmFunctions.httpsCallable('entrarPorUsuario');
+          const response = await call({ usuario: email.trim().toLowerCase(), senha: password });
+          if (!response?.data?.customToken) throw new Error('Token de login curto indisponível.');
+          await auth.signInWithCustomToken(response.data.customToken);
+        }
         await loadProfileIfNeeded(true);
         renderAuthInfo();
         showToast('Xabuia conectado.', 'success');
@@ -1261,6 +1292,133 @@
     }
   }
 
+
+  /********************************************************************
+   * AVISOS XABUIA NO INFRADESK (opt-in; sem mexer nas notificações nativas)
+   ********************************************************************/
+  const noticeTM = { unsubs: [], initialized: false, enabled: false, audio: null, count: 0, alertKeys: new Set(), seen: new Map() };
+  function tmNotifKey() { return `xabuia_tamper_avisos_v1_${state.user?.uid || 'anon'}`; }
+  function tmEventAt(ticket) {
+    const date = ticket?.ultimaOcorrenciaEm || ticket?.atualizadoEm;
+    if (!date) return 0;
+    if (typeof date.toMillis === 'function') return date.toMillis();
+    if (typeof date.toDate === 'function') return date.toDate().getTime();
+    return new Date(date).getTime() || 0;
+  }
+  function tmAlertId(ticket) {
+    return `${ticket.id}|${tmEventAt(ticket)}|${ticket.ultimaOcorrenciaUsuarioId || ''}|${ticket.status || ''}|${ticket.ultimaOcorrenciaTexto || ''}`;
+  }
+  function stopTmNotices() {
+    noticeTM.unsubs.forEach((fn) => { try { fn(); } catch (_) {} });
+    noticeTM.unsubs = []; noticeTM.initialized = false;
+  }
+  function ensureTmNoticeControl() {
+    let button = document.getElementById('xabuia-notification-toggle');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button'; button.id = 'xabuia-notification-toggle';
+      button.className = 'xabuia-notice-control';
+      button.addEventListener('click', toggleTmNotices);
+      document.body.appendChild(button);
+    }
+    button.style.display = state.user && state.profile?.ativo !== false ? '' : 'none';
+    button.classList.toggle('is-on', noticeTM.enabled);
+    button.classList.toggle('has-new', noticeTM.count > 0);
+    button.textContent = `🔔 Xabuia ${noticeTM.enabled ? 'som ligado' : 'ativar avisos'}${noticeTM.count ? ' • ' + noticeTM.count : ''}`;
+  }
+  async function unlockTmSound() {
+    try {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return;
+      if (!noticeTM.audio) noticeTM.audio = new Ctor();
+      await noticeTM.audio.resume();
+    } catch (_) {}
+  }
+  function playTmNotice() {
+    try {
+      const ctx = noticeTM.audio;
+      if (!ctx || ctx.state !== 'running') return;
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = 'sine'; osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.setValueAtTime(1174, ctx.currentTime + .10);
+      gain.gain.setValueAtTime(.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(.08, ctx.currentTime + .018);
+      gain.gain.exponentialRampToValueAtTime(.0001, ctx.currentTime + .32);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + .33);
+    } catch (_) {}
+  }
+  function displayTmNotice(ticket) {
+    const id = tmAlertId(ticket);
+    if (noticeTM.alertKeys.has(id)) return;
+    noticeTM.alertKeys.add(id);
+    if (noticeTM.alertKeys.size > 250) noticeTM.alertKeys.clear();
+    noticeTM.count += 1;
+    ensureTmNoticeControl();
+    playTmNotice();
+    const text = String(ticket.ultimaOcorrenciaTexto || `Status: ${ticket.status || 'aberto'}`).slice(0, 180);
+    let pop = document.getElementById('xabuia-notice-pop');
+    if (!pop) { pop = document.createElement('div'); pop.id = 'xabuia-notice-pop'; pop.className = 'xabuia-notice-pop'; document.body.appendChild(pop); }
+    pop.textContent = `🔔 Xabuia • ${text}`;
+    window.clearTimeout(displayTmNotice.timer);
+    displayTmNotice.timer = setTimeout(() => pop?.remove(), 8000);
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try { new Notification('🔔 Retorno Xabuia', { body: text, icon: XABUIA_ICON_URL, tag: `xabuia-${id}` }); } catch (_) {}
+    }
+    targetCards().forEach((card) => {
+      const item = parseCard(card);
+      if (item.chave && item.chave === digitsOnly(ticket.chave || '')) card.classList.add('xabuia-notice-card');
+    });
+  }
+  function startTmNotices() {
+    stopTmNotices();
+    if (!noticeTM.enabled || !state.user || !state.profile || state.profile.ativo === false) return;
+    const subStart = Date.now();
+    const queries = [];
+    if (state.profile.papel === 'operador') {
+      queries.push(db.collection('chamados').where('status','in',['aberto','reaberto']).limit(100));
+      queries.push(db.collection('chamados').where('status','==','em_tratamento').where('operadorTratamentoId','==',state.user.uid).limit(100));
+    } else if (state.profile.papel === 'usuario' && state.profile.organizacaoId) {
+      queries.push(db.collection('chamados').where('organizacaoId','==',state.profile.organizacaoId).where('solicitantesIds','array-contains',state.user.uid).where('status','in',['aberto','reaberto','em_tratamento','informacoes_divergentes','devolver_recusar','finalizado']).limit(100));
+    }
+    for (const q of queries) {
+      let first = true;
+      const unsub = q.onSnapshot((snap) => {
+        if (!first && !snap.metadata.hasPendingWrites) {
+          snap.docChanges().forEach((change) => {
+            if (change.type === 'removed') return;
+            const ticket = { id: change.doc.id, ...change.doc.data() };
+            if (!ticket.ultimaOcorrenciaUsuarioId || ticket.ultimaOcorrenciaUsuarioId === state.user?.uid) return;
+            if (tmEventAt(ticket) < subStart - 1500) return;
+            displayTmNotice(ticket);
+          });
+        }
+        first = false;
+      }, (error) => console.warn('[Xabuia] Avisos não puderam iniciar; confira os índices/regras:', error));
+      noticeTM.unsubs.push(unsub);
+    }
+  }
+  async function toggleTmNotices() {
+    noticeTM.enabled = !noticeTM.enabled;
+    if (state.user) localStorage.setItem(tmNotifKey(), noticeTM.enabled ? '1' : '0');
+    if (noticeTM.enabled) {
+      await unlockTmSound();
+      if ('Notification' in window && Notification.permission === 'default') {
+        try { await Notification.requestPermission(); } catch (_) {}
+      }
+      startTmNotices(); playTmNotice();
+    } else stopTmNotices();
+    noticeTM.count = 0;
+    document.querySelectorAll('.xabuia-notice-card').forEach((el) => el.classList.remove('xabuia-notice-card'));
+    ensureTmNoticeControl();
+  }
+  function refreshTmNotificationsForUser() {
+    stopTmNotices(); noticeTM.count = 0; noticeTM.alertKeys.clear();
+    noticeTM.enabled = !!state.user && localStorage.getItem(tmNotifKey()) === '1';
+    ensureTmNoticeControl();
+    if (noticeTM.enabled) startTmNotices();
+  }
+
   /********************************************************************
    * OBSERVADOR DO KANBAN
    ********************************************************************/
@@ -1273,6 +1431,7 @@
     injectStyles();
     ensureModal();
     scanCards();
+    ensureTmNoticeControl();
     observer.observe(document.body, { childList: true, subtree: true });
     window.addEventListener('focus', scanCards);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) scanCards(); });
