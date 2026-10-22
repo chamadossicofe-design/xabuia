@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.17
+// @version      3.2.18
 // @description  Xabuia Infradesk compatível com outros aplicativos Firebase na mesma página, login híbrido e modo econômico.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados/painel*
@@ -31,7 +31,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.17-login-google-sdk-isolado';
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.18-campainha-compacta';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_BLIN_URL = 'https://chamadossicofe-design.github.io/xabuia/blin.mp3';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
@@ -778,14 +778,18 @@
       .chamado-item[data-xabuia-status="em_tratamento"]{border-left:4px solid #ea580c!important}
       .chamado-item[data-xabuia-status="finalizado"]{border-left:4px solid #059669!important}
       .chamado-item[data-xabuia-status="informacoes_divergentes"],.chamado-item[data-xabuia-status="devolver_recusar"]{border-left:4px solid #dc2626!important}
-      .xabuia-notice-control{position:fixed;bottom:18px;right:18px;z-index:999998;border:1px solid #c7d2fe;border-radius:16px;padding:10px 12px;box-shadow:0 8px 28px rgba(15,23,42,.22);background:#eef2ff;color:#1e40af;font:800 12px system-ui;cursor:pointer}
-      .xabuia-notice-control.is-on{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
-      .xabuia-notice-control.has-new{background:#fef3c7;border-color:#f59e0b;color:#92400e}
-      .xabuia-notice-test{position:fixed;right:18px;bottom:65px;z-index:999998;border:1px solid #c7d2fe;border-radius:12px;padding:7px 10px;background:#fff;color:#1e40af;box-shadow:0 8px 20px rgba(15,23,42,.12);font:700 11px system-ui;cursor:pointer}
-      .xabuia-notice-test:focus-visible{outline:3px solid #155eef;outline-offset:2px}
+      /* Campainha compacta: o posicionamento acompanha o #sigma-abrir-painel-doca quando presente. */
+      .xabuia-notice-control{position:fixed;bottom:18px;right:100px;z-index:1000001;display:inline-flex;align-items:center;justify-content:center;width:36px;height:32px;min-width:36px;padding:0;border:1px solid #d0d7e2;border-radius:9px;background:#f1f5f9;color:#475569;box-shadow:0 5px 15px rgba(15,23,42,.24);font:19px/1 system-ui,sans-serif;cursor:pointer}
+      .xabuia-notice-control.is-on{background:#ecfdf5;border-color:#6ee7b7;color:#065f46}
+      .xabuia-notice-control.has-new::after{content:'';position:absolute;top:1px;right:1px;width:7px;height:7px;border-radius:50%;background:#ef4444;border:1px solid #fff}
+      .xabuia-notice-control:focus-visible{outline:3px solid #155eef;outline-offset:3px}
       .xabuia-notice-card{outline:3px solid #f59e0b!important;outline-offset:1px;box-shadow:0 0 0 5px rgba(245,158,11,.16)!important}
       .xabuia-notice-new{border-left:5px solid #f59e0b!important}
-      .xabuia-notice-pop{position:fixed;right:18px;bottom:109px;width:min(390px,calc(100vw - 36px));background:#111827;color:#fff;z-index:999999;padding:13px 16px;border-radius:14px;box-shadow:0 14px 38px rgba(0,0,0,.22);font:13px system-ui}
+      .xabuia-notice-pop{position:fixed;right:18px;bottom:74px;width:min(450px,calc(100vw - 36px));background:#111827;color:#fff;z-index:1000000;padding:12px 15px;border-radius:14px;box-shadow:0 14px 38px rgba(0,0,0,.22);font:13px/1.4 system-ui,sans-serif;display:flex;gap:10px;align-items:flex-start}
+      .xabuia-notice-pop-icon{font-size:21px;line-height:1.2;flex:none}
+      .xabuia-notice-pop-text{display:grid;gap:3px;min-width:0}
+      .xabuia-notice-pop-text strong{font-size:12.5px;line-height:1.4;overflow-wrap:anywhere}
+      .xabuia-notice-pop-text small{font-size:11.5px;color:#cbd5e1;line-height:1.35;overflow-wrap:anywhere}
     `;
     document.head.appendChild(style);
   }
@@ -882,6 +886,7 @@
     });
     decorateTmCards();
     syncVisibleKnownMonitors();
+    positionTmBell();
   }
 
   function addXabuiaButton(card) {
@@ -1399,48 +1404,54 @@
   function tmAudioErrorMessage(error) {
     const name = String(error?.name || '');
     const mediaErrorCode = noticeTM.audio?.error?.code || 0;
-    if (name === 'NotAllowedError') return 'O Chrome bloqueou a reprodução automática nesta página. Clique em “🔊 Testar som” para liberar.';
+    if (name === 'NotAllowedError') return 'O Chrome bloqueou a reprodução automática nesta página. Clique na campainha 🔕 para ativar o som do Xabuia.';
     if (name === 'NotSupportedError' || mediaErrorCode === 4) return 'O blin.mp3 não pôde ser carregado ou foi bloqueado pelo InfraDesk (verifique Console → CSP/media-src).';
     if (mediaErrorCode === 2) return 'Erro de rede ao buscar blin.mp3 no GitHub Pages.';
     if (mediaErrorCode === 3) return 'O navegador não conseguiu decodificar blin.mp3.';
     return String(error?.message || 'O navegador não conseguiu reproduzir o blin.mp3.');
   }
+  function positionTmBell() {
+    const bell = document.getElementById('xabuia-notification-toggle');
+    if (!bell) return;
+    const panel = document.getElementById('sigma-abrir-painel-doca');
+    if (panel && panel.getClientRects().length) {
+      const rect = panel.getBoundingClientRect();
+      // Mede o canto esquerdo real do Painel: funciona com botões largos ou compactos.
+      const rightPx = Math.max(8, Math.round(window.innerWidth - rect.left + 8));
+      bell.style.right = `${rightPx}px`;
+      // Centraliza verticalmente com o Painel Doca, sem alterar o painel de outro script.
+      const middleY = rect.top + rect.height / 2;
+      bell.style.bottom = `${Math.max(8, Math.round(window.innerHeight - middleY - 16))}px`;
+    } else {
+      // Se o script Painel Doca não estiver instalado, usa o canto inferior direito.
+      bell.style.right = '18px';
+      bell.style.bottom = '18px';
+    }
+  }
   function ensureTmNoticeControl() {
+    // Limpeza do antigo botão separado, caso o DOM seja reaproveitado.
+    document.getElementById('xabuia-notification-sound-test')?.remove();
     let button = document.getElementById('xabuia-notification-toggle');
     if (!button) {
       button = document.createElement('button');
-      button.type = 'button'; button.id = 'xabuia-notification-toggle';
+      button.type = 'button';
+      button.id = 'xabuia-notification-toggle';
       button.className = 'xabuia-notice-control';
       button.addEventListener('click', toggleTmNotices);
       document.body.appendChild(button);
     }
-    const show = !!(state.user && state.profile?.ativo !== false);
-    button.style.display = show ? '' : 'none';
+    const visible = !!(state.user && state.profile?.ativo !== false);
+    button.style.display = visible ? 'inline-flex' : 'none';
     button.classList.toggle('is-on', noticeTM.enabled);
     button.classList.toggle('has-new', noticeTM.count > 0);
-    // Não chamar "som ligado" somente porque um valor ficou salvo no localStorage.
-    const caption = !noticeTM.enabled ? 'ativar avisos'
-      : noticeTM.audioReady ? 'som ligado'
-      : 'avisos ativos · testar som';
-    button.textContent = `🔔 Xabuia ${caption}${noticeTM.count ? ' • ' + noticeTM.count : ''}`;
-    button.title = noticeTM.audioError || 'O alerta é individual, conforme as consultas autorizadas no Firestore.';
-
-    // Teste independente do toggle: não interrompe os ouvintes de novas ocorrências.
-    let test = document.getElementById('xabuia-notification-sound-test');
-    if (!test) {
-      test = document.createElement('button');
-      test.type = 'button'; test.id = 'xabuia-notification-sound-test';
-      test.className = 'xabuia-notice-test';
-      test.textContent = '🔊 Testar som';
-      test.title = 'Reproduzir blin.mp3 para verificar permissão de áudio do InfraDesk';
-      test.addEventListener('click', async () => {
-        const ok = await unlockTmSound();
-        if (ok) showToast('🔊 blin.mp3 reproduzido no InfraDesk!', 'success');
-        else showToast(noticeTM.audioError || 'Falha no blin.mp3. Consulte o Console (F12).', 'error');
-      });
-      document.body.appendChild(test);
-    }
-    test.style.display = show && noticeTM.enabled ? '' : 'none';
+    button.textContent = noticeTM.enabled ? '🔔' : '🔕';
+    const label = noticeTM.enabled ? 'Desativar avisos do Xabuia' : 'Ativar avisos do Xabuia';
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-pressed', String(noticeTM.enabled));
+    button.title = noticeTM.audioError
+      ? `${label} — ${noticeTM.audioError}`
+      : `${label}${noticeTM.count > 0 ? ` • ${noticeTM.count} novo(s)` : ''}`;
+    positionTmBell();
   }
   function tmSoundElement() {
     if (!noticeTM.audio) {
@@ -1531,6 +1542,26 @@
       else if (!$('.xabuia-box',card)) delete card.dataset.xabuiaStatus;
     });
   }
+  function tmNoticeLabel(ticket) {
+    const tipo = String(ticket.tipoChamado || '');
+    const digits = digitsOnly(ticket.chave || '');
+    if (digits.length === 44 && (tipo.startsWith('nf_') || !tipo)) {
+      return `NF ${parseNfeKey(digits)?.numero || digits.slice(-8)}`;
+    }
+    const produto = normalizeText(ticket.codigoProduto || '');
+    if (produto) return `Produto ${produto.slice(0, 34)}`;
+    if (digits.length === 44) return `NF ${parseNfeKey(digits)?.numero || digits.slice(-8)}`;
+    const chave = normalizeText(ticket.chave || '');
+    return chave ? `Chamado ${chave.slice(0, 24)}` : `Chamado ${String(ticket.id || '').slice(0, 10)}`;
+  }
+  function tmNoticeDescription(ticket) {
+    const reference = tmNoticeLabel(ticket);
+    const status = STATUS_LABELS[ticket.status] || normalizeText(ticket.status || 'Atualizado');
+    const author = normalizeText(ticket.ultimaOcorrenciaUsuarioNome || ticket.ultimaOcorrenciaUsuarioEmail || '');
+    const title = `Xabuia • ${reference} • ${status}${author ? ` por ${author}` : ''}`;
+    const detail = normalizeText(ticket.ultimaOcorrenciaTexto || '').slice(0, 160);
+    return { title, detail };
+  }
   function displayTmNotice(ticket) {
     const id = tmAlertId(ticket);
     if (noticeTM.alertKeys.has(id)) return;
@@ -1541,14 +1572,33 @@
     if (chave) noticeTM.lastAlertsByKey.set(chave, { status: ticket.status || 'aberto', id });
     ensureTmNoticeControl();
     playTmNotice();
-    const text = String(ticket.ultimaOcorrenciaTexto || `Status: ${ticket.status || 'aberto'}`).slice(0, 180);
+    const { title, detail } = tmNoticeDescription(ticket);
     let pop = document.getElementById('xabuia-notice-pop');
-    if (!pop) { pop = document.createElement('div'); pop.id = 'xabuia-notice-pop'; pop.className = 'xabuia-notice-pop'; document.body.appendChild(pop); }
-    pop.textContent = `🔔 Xabuia • ${text}`;
+    if (!pop) {
+      pop = document.createElement('div');
+      pop.id = 'xabuia-notice-pop';
+      pop.className = 'xabuia-notice-pop';
+      document.body.appendChild(pop);
+    }
+    // Usamos textContent: evita inserir HTML de ocorrências digitadas por usuários.
+    const icon = document.createElement('span');
+    icon.className = 'xabuia-notice-pop-icon';
+    icon.textContent = '🔔';
+    const content = document.createElement('span');
+    content.className = 'xabuia-notice-pop-text';
+    const titleNode = document.createElement('strong');
+    titleNode.textContent = title;
+    content.appendChild(titleNode);
+    if (detail) {
+      const detailNode = document.createElement('small');
+      detailNode.textContent = detail;
+      content.appendChild(detailNode);
+    }
+    pop.replaceChildren(icon, content);
     window.clearTimeout(displayTmNotice.timer);
-    displayTmNotice.timer = setTimeout(() => pop?.remove(), 8000);
+    displayTmNotice.timer = window.setTimeout(() => pop.remove(), 8000);
     if ('Notification' in window && Notification.permission === 'granted') {
-      try { new Notification('🔔 Retorno Xabuia', { body: text, icon: XABUIA_ICON_URL, tag: `xabuia-${id}` }); } catch (_) {}
+      try { new Notification(`🔔 ${title}`, { body: detail || 'Há uma nova atualização neste chamado.', icon: XABUIA_ICON_URL, tag: `xabuia-${id}` }); } catch (_) {}
     }
     decorateTmCards();
   }
@@ -1631,9 +1681,10 @@
     scanCards();
     ensureTmNoticeControl();
     observer.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('resize', positionTmBell, { passive: true });
     window.addEventListener('focus', scanCards);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) scanCards(); });
-    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Login Google usa SDK capturado, sem misturar provedores Firebase; mantém e-mail/senha e notificações.`);
+    console.log(`[Xabuia] Tampermonkey v${XABUIA_VERSION} carregado. Login Google isolado; campainha compacta 🔔/🔕, blin.mp3 e avisos por NF.`);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
