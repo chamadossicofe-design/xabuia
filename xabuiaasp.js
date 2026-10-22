@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.13
+// @version      3.2.14
 // @description  Xabuia Infradesk compatível com outros aplicativos Firebase na mesma página, login híbrido e modo econômico.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados/painel*
@@ -32,8 +32,9 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.13-login-curto-alertas';
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.14-login-curto-blin';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
+  const XABUIA_BLIN_URL = 'https://chamadossicofe-design.github.io/xabuia/blin.mp3';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
   const XABUIA_VERSION_CHECK_EVERY_MS = 1000 * 60 * 60 * 4; // 4 horas = até 6 verificações por dia
   const XABUIA_UPDATE_CACHE_KEY = 'xabuia_force_update_cache_v1';
@@ -1326,27 +1327,33 @@
     button.classList.toggle('has-new', noticeTM.count > 0);
     button.textContent = `🔔 Xabuia ${noticeTM.enabled ? 'som ligado' : 'ativar avisos'}${noticeTM.count ? ' • ' + noticeTM.count : ''}`;
   }
+  function tmSoundElement() {
+    if (!noticeTM.audio) {
+      noticeTM.audio = new Audio(XABUIA_BLIN_URL);
+      noticeTM.audio.preload = 'auto';
+      noticeTM.audio.volume = 0.8;
+    }
+    return noticeTM.audio;
+  }
   async function unlockTmSound() {
+    // Chamado pelo clique em 'ativar avisos'; serve como teste do blin.mp3.
+    const audio = tmSoundElement();
     try {
-      const Ctor = window.AudioContext || window.webkitAudioContext;
-      if (!Ctor) return;
-      if (!noticeTM.audio) noticeTM.audio = new Ctor();
-      await noticeTM.audio.resume();
-    } catch (_) {}
+      audio.pause(); audio.currentTime = 0;
+      await audio.play();
+      return true;
+    } catch (error) {
+      console.warn('[Xabuia] Falha ao tocar blin.mp3 no InfraDesk:', error);
+      return false;
+    }
   }
   function playTmNotice() {
+    if (!noticeTM.enabled) return;
+    const audio = tmSoundElement();
     try {
-      const ctx = noticeTM.audio;
-      if (!ctx || ctx.state !== 'running') return;
-      const osc = ctx.createOscillator(), gain = ctx.createGain();
-      osc.type = 'sine'; osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.setValueAtTime(1174, ctx.currentTime + .10);
-      gain.gain.setValueAtTime(.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(.08, ctx.currentTime + .018);
-      gain.gain.exponentialRampToValueAtTime(.0001, ctx.currentTime + .32);
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.start(); osc.stop(ctx.currentTime + .33);
-    } catch (_) {}
+      audio.pause(); audio.currentTime = 0;
+      void audio.play().catch((error) => console.warn('[Xabuia] blin.mp3 não tocou:', error));
+    } catch (error) { console.warn('[Xabuia] Falha de áudio:', error); }
   }
   function displayTmNotice(ticket) {
     const id = tmAlertId(ticket);
@@ -1402,11 +1409,12 @@
     noticeTM.enabled = !noticeTM.enabled;
     if (state.user) localStorage.setItem(tmNotifKey(), noticeTM.enabled ? '1' : '0');
     if (noticeTM.enabled) {
-      await unlockTmSound();
+      const soundTest = unlockTmSound(); // toca uma única vez ao ativar
       if ('Notification' in window && Notification.permission === 'default') {
         try { await Notification.requestPermission(); } catch (_) {}
       }
-      startTmNotices(); playTmNotice();
+      if (!(await soundTest)) showToast('Alertas visuais ativos, mas não consegui tocar blin.mp3. Confira o arquivo e a permissão de áudio do navegador.', 'error');
+      startTmNotices();
     } else stopTmNotices();
     noticeTM.count = 0;
     document.querySelectorAll('.xabuia-notice-card').forEach((el) => el.classList.remove('xabuia-notice-card'));
