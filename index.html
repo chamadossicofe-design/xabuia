@@ -36,15 +36,9 @@
           <input id="displayNameInput" autocomplete="name" placeholder="Ex.: Josiscreusa Maria" />
         </label>
 
-        <label id="registerUsernameWrap" class="field hidden">
-          <span>Usuário Xabuia</span>
-          <input id="registerUsernameInput" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="32" placeholder="Ex.: elias.araujo" />
-          <small>Você pode usar o mesmo login do InfraDesk. A senha é independente.</small>
-        </label>
-
         <label class="field">
-          <span id="emailFieldLabel">Usuário ou e-mail</span>
-          <input id="emailInput" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="elias.araujo ou seu@email.com" required />
+          <span id="emailFieldLabel">E-mail Xabuia</span>
+          <input id="emailInput" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="nome@empresa.com.br" required />
         </label>
 
         <label class="field">
@@ -81,14 +75,8 @@
 
       <form id="onboardingForm" class="stack">
         <label class="field">
-          <span>Usuário</span>
+          <span>Nome completo</span>
           <input id="onboardingNameInput" autocomplete="name" placeholder="Seu nome" required />
-        </label>
-
-        <label class="field">
-          <span>Usuário Xabuia (login curto)</span>
-          <input id="onboardingUsernameInput" autocomplete="off" autocapitalize="none" maxlength="32" placeholder="Ex.: elias.araujo" />
-          <small>Use o mesmo nome de login do InfraDesk, se quiser. Não copia a senha.</small>
         </label>
 
         <label class="field">
@@ -130,7 +118,6 @@
         <button id="adminQueryActiveBtn" class="btn primary hidden" type="button">Consultar por filtros</button>
         <button id="adminClearQueryBtn" class="btn ghost hidden" type="button">Limpar consulta</button>
         <button id="adminBtn" class="btn ghost hidden" type="button">Admin</button>
-        <button id="xabuiaUsernameBtn" class="btn ghost" type="button">Meu usuário</button>
         <button id="xabuiaSoundBtn" class="btn ghost" type="button">🔊 Ativar som</button>
         <button id="xabuiaAlertsBtn" class="btn ghost" type="button">🔔 Avisos <strong id="xabuiaUnreadCount">0</strong></button>
         <button id="logoutBtn" class="btn ghost" type="button">Sair</button>
@@ -143,7 +130,7 @@
           <h2>🔔 Avisos do Xabuia</h2>
           <button type="button" class="icon-btn" data-close-dialog="xabuiaAlertsDialog">×</button>
         </div>
-        <p class="muted">Som e avisos enquanto o site estiver aberto. Acompanhe respostas de outros usuários.</p>
+        <p class="muted">Retornos dos seus chamados e, para operadores, novas solicitações e chamados atribuídos. O som blin.mp3 exige ativação pelo navegador.</p>
         <div id="xabuiaAlertsList" class="xabuia-alerts-list"></div>
       </div>
     </dialog>

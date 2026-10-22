@@ -10,8 +10,7 @@ import {
   GoogleAuthProvider,
   sendPasswordResetEmail,
   updateProfile,
-  signOut,
-  signInWithCustomToken
+  signOut
 } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js';
 import {
   getFirestore,
@@ -37,7 +36,6 @@ import {
   uploadBytes,
   getDownloadURL
 } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-storage.js';
-import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-functions.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyADfd6RhNN6rj6qX1judbjevvh-ZwMwmJE',
@@ -48,7 +46,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V33.1-login-usuario-blin';
+const APP_VERSION = 'V34-email-blin-alertas';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -143,9 +141,6 @@ auth.languageCode = 'pt-BR';
 const db = getFirestore(app);
 const storage = getStorage(app);
 const googleProvider = new GoogleAuthProvider();
-const functions = getFunctions(app, 'us-central1');
-const entrarPorUsuario = httpsCallable(functions, 'entrarPorUsuario');
-const definirUsuario = httpsCallable(functions, 'definirUsuario');
 const XABUIA_BLIN_URL = new URL('./blin.mp3', import.meta.url).href;
 
 const $ = (id) => document.getElementById(id);
@@ -161,11 +156,7 @@ const els = {
   authForm: $('authForm'),
   nameField: $('nameField'),
   displayNameInput: $('displayNameInput'),
-  registerUsernameWrap: $('registerUsernameWrap'),
-  registerUsernameInput: $('registerUsernameInput'),
   emailFieldLabel: $('emailFieldLabel'),
-  onboardingUsernameInput: $('onboardingUsernameInput'),
-  xabuiaUsernameBtn: $('xabuiaUsernameBtn'),
   xabuiaSoundBtn: $('xabuiaSoundBtn'),
   xabuiaAlertsBtn: $('xabuiaAlertsBtn'),
   xabuiaUnreadCount: $('xabuiaUnreadCount'),
@@ -287,7 +278,6 @@ const state = {
   filterTimer: null,
   filterToken: 0,
   historyLoadedFor: null,
-  loginHandleDraft: '',
   notifications: [],
   soundContext: null,
   soundAllowed: false
@@ -1416,21 +1406,6 @@ function mergeTicketBuckets() {
 }
 
 
-// V33: login curto vinculado ao UID Firebase por Cloud Functions, nunca ao login InfraDesk.
-function normalizeXabuiaUsername(value) {
-  const username = String(value || '').trim().toLowerCase();
-  return /^[a-z][a-z0-9._-]{2,31}$/.test(username) ? username : '';
-}
-
-async function claimMyUsername(value, quiet = false) {
-  const usuario = normalizeXabuiaUsername(value);
-  if (!usuario) throw new Error('O usuário deve ter 3 a 32 caracteres: letras sem acento, números, ponto, _ ou -.');
-  const result = await definirUsuario({ usuario });
-  if (state.profile && state.user?.uid === result.data?.uid) state.profile.usuario = usuario;
-  if (!quiet) showToast(`Login curto ${usuario} vinculado à sua conta Xabuia.`, 'success');
-  return usuario;
-}
-
 function noticeStoreKey() { return `xabuia_avisos_v33_${state.user?.uid || 'anon'}`; }
 function soundPrefKey() { return `xabuia_som_v33_${state.user?.uid || 'anon'}`; }
 function readSoundPref() { return !!state.user && localStorage.getItem(soundPrefKey()) === '1'; }
@@ -1554,38 +1529,12 @@ function showMyNotices() {
   setAlertStore(); updateNoticeButton();
   els.xabuiaAlertsDialog?.showModal();
 }
-async function chooseMyUsername() {
-  if (!state.user) return;
-  if (state.profile?.usuario) {
-    showToast(`Seu usuário é ${state.profile.usuario}. Para evitar duplicidades, alteração exige administração.`, 'success');
-    return;
-  }
-  const value = window.prompt('Escolha seu usuário Xabuia (pode ser igual ao InfraDesk):', '');
-  if (value == null) return;
-  try { await claimMyUsername(value); } catch (error) {
-    // O SDK apresenta apenas 'internal' quando o backend lança uma exceção não tratada.
-    // Não mostramos tokens, senhas ou dados privados no console.
-    console.error('[Xabuia] Erro ao definir login curto (confira a função definirUsuario no Firebase):', {
-      codigo: String(error?.code || ''),
-      mensagem: String(error?.message || ''),
-      detalhes: error?.details || null
-    });
-    const code = String(error?.code || '');
-    const message = /internal/i.test(code)
-      ? 'Falha interna da função definirUsuario. Verifique Firebase > Functions > Logs; os dados da conta não foram apagados.'
-      : /not-found|unavailable/i.test(code)
-      ? 'Função definirUsuario não disponível. Publique as Cloud Functions no Firebase (não no GitHub Pages).'
-      : String(error?.message || 'verifique a função definirUsuario no Firebase.');
-    showToast(`Não foi possível definir o usuário: ${message}`, 'error');
-  }
-}
-
 function listenTicketBucket(name, q) {
   // Não anuncia o snapshot inicial nem itens antigos reapresentados pelo Firestore.
   let initialSnapshot = true;
   const subscribedAt = Date.now();
   return onSnapshot(q, (snapshot) => {
-    if (!initialSnapshot && !snapshot.metadata.hasPendingWrites) {
+    if (!initialSnapshot && !snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'removed') return;
         const ticket = { id: change.doc.id, ...change.doc.data() };
@@ -1631,10 +1580,10 @@ function startTicketsListener() {
         query(chamadosRef, where('status', 'in', ['aberto', 'reaberto']), limit(LIVE_OPEN_LIMIT))
       ),
       listenTicketBucket(
-        'meus_em_tratamento',
+        'meus_atribuidos',
         query(
           chamadosRef,
-          where('status', '==', 'em_tratamento'),
+          // Inclui finalizados/devolvidos, para receber o último retorno ao sair de "em tratamento".
           where('operadorTratamentoId', '==', state.user.uid),
           limit(LIVE_TREATMENT_LIMIT)
         )
@@ -3881,13 +3830,13 @@ async function completeOnboarding(event) {
   await setDoc(doc(db, 'usuarios', state.user.uid), data);
   if (state.user.displayName !== nome) await updateProfile(state.user, { displayName: nome });
   state.profile = { id: state.user.uid, ...data };
-  const desiredUsername = String(els.onboardingUsernameInput?.value || state.loginHandleDraft || '').trim();
-  if (desiredUsername) {
-    try { await claimMyUsername(desiredUsername, true); }
-    catch (error) { showToast('Conta criada, mas o login curto ainda não foi vinculado. Use Meu usuário depois de publicar as Cloud Functions.', 'error'); }
-  }
-  state.loginHandleDraft = '';
   renderApp();
+}
+
+function validXabuiaEmail(value) {
+  // Mensagem clara para login curto e demais formatos incompletos, antes de chamar Firebase.
+  const email = String(value || '').trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 }
 
 function setAuthMode(mode) {
@@ -3896,14 +3845,12 @@ function setAuthMode(mode) {
   els.tabLogin.classList.toggle('active', !isRegister);
   els.tabRegister.classList.toggle('active', isRegister);
   els.nameField.classList.toggle('hidden', !isRegister);
-  els.registerUsernameWrap?.classList.toggle('hidden', !isRegister);
-  if (els.registerUsernameInput) els.registerUsernameInput.required = isRegister;
   if (els.emailInput) {
-    els.emailInput.type = isRegister ? 'email' : 'text';
-    els.emailInput.autocomplete = isRegister ? 'email' : 'username';
-    els.emailInput.placeholder = isRegister ? 'seu@email.com' : 'elias.araujo ou seu@email.com';
+    els.emailInput.type = 'email';
+    els.emailInput.autocomplete = 'email';
+    els.emailInput.placeholder = 'nome@empresa.com.br';
   }
-  if (els.emailFieldLabel) els.emailFieldLabel.textContent = isRegister ? 'E-mail (recuperação da senha)' : 'Usuário ou e-mail';
+  if (els.emailFieldLabel) els.emailFieldLabel.textContent = 'E-mail Xabuia';
   els.authSubmitBtn.textContent = isRegister ? 'Criar conta' : 'Entrar';
   els.passwordInput.autocomplete = isRegister ? 'new-password' : 'current-password';
 }
@@ -3914,16 +3861,21 @@ async function submitAuth(event) {
   const password = els.passwordInput.value;
   const displayName = normalizeKey(els.displayNameInput.value);
 
+  if (!validXabuiaEmail(email)) {
+    els.emailInput.focus();
+    els.emailInput.setCustomValidity('E-mail inválido. Informe o endereço completo, como nome@empresa.com.br.');
+    els.emailInput.reportValidity();
+    showToast('E-mail inválido. Informe o endereço completo, como nome@empresa.com.br.', 'error');
+    return;
+  }
+  els.emailInput.setCustomValidity('');
+
   try {
     if (state.mode === 'register') {
       if (!displayName) return showToast('Informe seu nome.', 'error');
-      const handle = normalizeXabuiaUsername(els.registerUsernameInput?.value);
-      if (!handle) return showToast('Informe um usuário curto válido (3–32 caracteres, sem espaços).', 'error');
-      state.loginHandleDraft = handle;
 
       try {
         const cred = await createUserWithEmailAndPassword(auth, email, password);
-        if (els.onboardingUsernameInput) els.onboardingUsernameInput.value = handle;
         await updateProfile(cred.user, { displayName });
         showToast('Conta criada. Agora escolha a organização.', 'success');
       } catch (error) {
@@ -3941,22 +3893,10 @@ async function submitAuth(event) {
         }
       }
     } else {
-      if (email.includes('@')) {
-        await signInWithEmailAndPassword(auth, email, password);
-      } else {
-        const usuario = normalizeXabuiaUsername(email);
-        if (!usuario) return showToast('Informe o login curto válido ou um e-mail completo.', 'error');
-        const result = await entrarPorUsuario({ usuario, senha: password });
-        const token = result?.data?.customToken;
-        if (!token) throw new Error('A função de login não retornou uma autenticação válida.');
-        await signInWithCustomToken(auth, token);
-      }
+      await signInWithEmailAndPassword(auth, email, password);
     }
   } catch (error) {
-    const unavailable = /unavailable|not-found|internal/i.test(String(error?.code || ''));
-    showToast(unavailable && !email.includes('@')
-      ? 'Login curto indisponível. Publique as Cloud Functions ou entre com o e-mail completo.'
-      : authErrorMessage(error), 'error');
+    showToast(authErrorMessage(error), 'error');
   }
 }
 
@@ -3974,9 +3914,9 @@ async function loginWithGoogle() {
 
 async function resetPassword() {
   const email = normalizeKey(els.emailInput.value);
-  if (!email || !email.includes('@')) {
+  if (!validXabuiaEmail(email)) {
     els.emailInput.focus();
-    return showToast('Para recuperar a senha, informe seu e-mail completo cadastrado, não o login curto.', 'error');
+    return showToast('E-mail inválido. Informe seu endereço completo para recuperar a senha.', 'error');
   }
 
   try {
@@ -3991,6 +3931,7 @@ function authErrorMessage(error) {
   const code = error?.code || '';
   const map = {
     'auth/invalid-credential': 'E-mail ou senha inválidos. Se essa conta foi criada pelo Google, use Entrar/Criar com Google; senha local não é criada automaticamente.',
+    'auth/invalid-email': 'E-mail inválido. Informe o endereço completo, como nome@empresa.com.br.',
     'auth/wrong-password': 'Senha inválida. Se essa conta foi criada pelo Google, use Entrar/Criar com Google.',
     'auth/user-not-found': 'Não encontrei esse e-mail. Crie a conta ou entre com Google.',
     'auth/email-already-in-use': 'Este e-mail já possui cadastro. Clique em Entrar, use o botão Google se foi criado pelo Gmail, ou recupere/defina a senha por e-mail.',
@@ -4278,7 +4219,6 @@ onAuthStateChanged(auth, async (user) => {
 
     if (!profile) {
       els.onboardingNameInput.value = user.displayName || '';
-      if (els.onboardingUsernameInput) els.onboardingUsernameInput.value = state.loginHandleDraft || '';
       showOnly(els.onboardingView);
       startOrgListener();
       return;
@@ -4309,8 +4249,20 @@ onAuthStateChanged(auth, async (user) => {
 
 els.tabLogin.addEventListener('click', () => setAuthMode('login'));
 els.tabRegister.addEventListener('click', () => setAuthMode('register'));
+// Validação amigável antes de tentar autenticar; nenhuma senha é enviada se o e-mail for inválido.
+els.emailInput.addEventListener('input', () => els.emailInput.setCustomValidity(''));
+els.emailInput.addEventListener('invalid', () => {
+  els.emailInput.setCustomValidity('E-mail inválido. Informe o endereço completo, como nome@empresa.com.br.');
+  showToast('E-mail inválido. Informe o endereço completo, como nome@empresa.com.br.', 'error');
+});
+els.authSubmitBtn?.addEventListener('click', () => {
+  if (!validXabuiaEmail(els.emailInput.value)) {
+    els.emailInput.setCustomValidity('E-mail inválido. Informe o endereço completo, como nome@empresa.com.br.');
+    els.emailInput.reportValidity();
+    showToast('E-mail inválido. Informe o endereço completo, como nome@empresa.com.br.', 'error');
+  } else els.emailInput.setCustomValidity('');
+});
 els.authForm.addEventListener('submit', submitAuth);
-els.xabuiaUsernameBtn?.addEventListener('click', chooseMyUsername);
 els.xabuiaSoundBtn?.addEventListener('click', toggleXabuiaSound);
 els.xabuiaAlertsBtn?.addEventListener('click', showMyNotices);
 els.googleBtn.addEventListener('click', loginWithGoogle);

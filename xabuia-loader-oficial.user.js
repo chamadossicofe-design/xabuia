@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Loader oficial InfraDesk
 // @namespace    xabuia/infradesk-loader
-// @version      3.0.4
+// @version      3.0.5
 // @description  Carrega o Xabuia do InfraDesk diretamente pelo Tampermonkey, sem fetch, eval ou injeção por script tag.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados*
@@ -15,15 +15,14 @@
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js
-// @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-functions-compat.js
-// @require      https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js?v=3.2.14-loader-3.0.4
+// @require      https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js?v=3.2.15-loader-3.0.5
 // ==/UserScript==
 
 (function () {
   'use strict';
 
-  const XABUIA_LOADER_VERSION = '3.0.4';
-  const XABUIA_MAIN_EXPECTED_VERSION = '3.2.14';
+  const XABUIA_LOADER_VERSION = '3.0.5';
+  const XABUIA_MAIN_EXPECTED_VERSION = '3.2.15';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
 
   window.__XABUIA_LOADER_PAGE_CONTEXT_ACTIVE__ = true;

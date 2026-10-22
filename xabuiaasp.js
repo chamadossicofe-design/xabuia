@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.14
+// @version      3.2.15
 // @description  Xabuia Infradesk compatível com outros aplicativos Firebase na mesma página, login híbrido e modo econômico.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados/painel*
@@ -15,7 +15,6 @@
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js
 // @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js
-// @require      https://www.gstatic.com/firebasejs/10.12.5/firebase-functions-compat.js
 // ==/UserScript==
 
 (function () {
@@ -32,7 +31,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.14-login-curto-blin';
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.15-email-alertas-blin';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_BLIN_URL = 'https://chamadossicofe-design.github.io/xabuia/blin.mp3';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
@@ -307,7 +306,6 @@
   const app = getXabuiaFirebaseApp();
   const auth = firebase.auth(app);
   const db = firebase.firestore(app);
-  const tmFunctions = app.functions('us-central1');
   auth.languageCode = 'pt-BR';
 
   auth.onAuthStateChanged((user) => {
@@ -331,6 +329,11 @@
     renderAuthInfo();
     scanCards();
     refreshTmNotificationsForUser();
+    // Se o usuário ativou avisos ontem e não há perfil no cache, busca só o próprio perfil.
+    // Sem opt-in não consulta nada; preserva o modo econômico.
+    if (state.user && !state.profile && localStorage.getItem(tmNotifKey()) === '1') {
+      void loadProfileIfNeeded(false);
+    }
   });
 
   // V3.2.9: login principal por e-mail/senha sem popup. Google redirect mantido como opção secundária: o login Google do Tampermonkey passa a usar redirecionamento direto.
@@ -843,6 +846,7 @@
       // Não consulta Firestore para card desconhecido. Só renderiza cache/local já conhecido.
       renderCardFromKnownTicket(card);
     });
+    decorateTmCards();
     syncVisibleKnownMonitors();
   }
 
@@ -973,11 +977,11 @@
     slot.innerHTML = `
       <div class="xabuia-login-grid">
         <div class="xabuia-login-field">
-          <label for="xabuia-email-login">Usuário ou e-mail Xabuia</label>
+          <label for="xabuia-email-login">E-mail Xabuia</label>
           <input id="xabuia-email-login" name="xabuia_independent_email"
-                 type="text" inputmode="text" autocomplete="off"
+                 type="email" inputmode="email" autocomplete="off"
                  autocapitalize="off" spellcheck="false" readonly
-                 placeholder="elias.araujo ou usuario@email.com">
+                 placeholder="nome@empresa.com.br">
         </div>
         <div class="xabuia-login-field">
           <label for="xabuia-password-login">Senha do Xabuia</label>
@@ -1050,15 +1054,9 @@
       showToast('Digite seu e-mail do Xabuia. Não use o preenchimento automático do InfraDesk.', 'error');
       return;
     }
-    const isEmail = email.includes('@');
-    if (!isEmail && !/^[a-z][a-z0-9._-]{2,31}$/i.test(email)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
       emailField?.focus();
-      showToast('Informe um usuário curto válido ou um e-mail completo.', 'error');
-      return;
-    }
-    if (isEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      emailField?.focus();
-      showToast('Informe o e-mail completo cadastrado no Xabuia.', 'error');
+      showToast('E-mail inválido. Informe o endereço completo, como nome@empresa.com.br.', 'error');
       return;
     }
     if (!password || passwordField?.dataset.xabuiaManual !== '1') {
@@ -1072,14 +1070,7 @@
     loginWithEmailPassword.inProgress = (async () => {
       try {
         if (btn) { btn.disabled = true; btn.textContent = 'Entrando...'; }
-        if (isEmail) {
-          await auth.signInWithEmailAndPassword(email, password);
-        } else {
-          const call = tmFunctions.httpsCallable('entrarPorUsuario');
-          const response = await call({ usuario: email.trim().toLowerCase(), senha: password });
-          if (!response?.data?.customToken) throw new Error('Token de login curto indisponível.');
-          await auth.signInWithCustomToken(response.data.customToken);
-        }
+        await auth.signInWithEmailAndPassword(email, password);
         await loadProfileIfNeeded(true);
         renderAuthInfo();
         showToast('Xabuia conectado.', 'success');
@@ -1297,7 +1288,7 @@
   /********************************************************************
    * AVISOS XABUIA NO INFRADESK (opt-in; sem mexer nas notificações nativas)
    ********************************************************************/
-  const noticeTM = { unsubs: [], initialized: false, enabled: false, audio: null, count: 0, alertKeys: new Set(), seen: new Map() };
+  const noticeTM = { unsubs: [], initialized: false, enabled: false, audio: null, count: 0, alertKeys: new Set(), seen: new Map(), lastAlertsByKey: new Map(), statusByKey: new Map(), statusBuckets: new Map() };
   function tmNotifKey() { return `xabuia_tamper_avisos_v1_${state.user?.uid || 'anon'}`; }
   function tmEventAt(ticket) {
     const date = ticket?.ultimaOcorrenciaEm || ticket?.atualizadoEm;
@@ -1355,12 +1346,38 @@
       void audio.play().catch((error) => console.warn('[Xabuia] blin.mp3 não tocou:', error));
     } catch (error) { console.warn('[Xabuia] Falha de áudio:', error); }
   }
+  function rebuildTmStatusMap() {
+    noticeTM.statusByKey.clear();
+    // Agrega todos os snapshots correntes por usuário sem buscar NF extra.
+    noticeTM.statusBuckets.forEach((tickets) => {
+      tickets.forEach((ticket) => {
+        const key = digitsOnly(ticket.chave || '');
+        if (key.length === 44) noticeTM.statusByKey.set(key, ticket.status || 'aberto');
+      });
+    });
+    decorateTmCards();
+  }
+  function decorateTmCards() {
+    // Card do InfraDesk pode ser recriado no modo lista ou painel. A chave NF-e liga
+    // a ocorrência Xabuia ao card, sem modificar o status nativo do InfraDesk.
+    $$('.chamado-item[data-chamado-id]').forEach((card) => {
+      const key = digitsOnly(parseCard(card).chave);
+      const alert = key && noticeTM.lastAlertsByKey.get(key);
+      const knownStatus = key && noticeTM.statusByKey.get(key);
+      card.classList.toggle('xabuia-notice-card', !!alert);
+      if (alert) card.dataset.xabuiaStatus = alert.status;
+      else if (knownStatus) card.dataset.xabuiaStatus = knownStatus;
+      else if (!$('.xabuia-box',card)) delete card.dataset.xabuiaStatus;
+    });
+  }
   function displayTmNotice(ticket) {
     const id = tmAlertId(ticket);
     if (noticeTM.alertKeys.has(id)) return;
     noticeTM.alertKeys.add(id);
     if (noticeTM.alertKeys.size > 250) noticeTM.alertKeys.clear();
     noticeTM.count += 1;
+    const chave = digitsOnly(ticket.chave || '');
+    if (chave) noticeTM.lastAlertsByKey.set(chave, { status: ticket.status || 'aberto', id });
     ensureTmNoticeControl();
     playTmNotice();
     const text = String(ticket.ultimaOcorrenciaTexto || `Status: ${ticket.status || 'aberto'}`).slice(0, 180);
@@ -1372,10 +1389,7 @@
     if ('Notification' in window && Notification.permission === 'granted') {
       try { new Notification('🔔 Retorno Xabuia', { body: text, icon: XABUIA_ICON_URL, tag: `xabuia-${id}` }); } catch (_) {}
     }
-    targetCards().forEach((card) => {
-      const item = parseCard(card);
-      if (item.chave && item.chave === digitsOnly(ticket.chave || '')) card.classList.add('xabuia-notice-card');
-    });
+    decorateTmCards();
   }
   function startTmNotices() {
     stopTmNotices();
@@ -1384,14 +1398,14 @@
     const queries = [];
     if (state.profile.papel === 'operador') {
       queries.push(db.collection('chamados').where('status','in',['aberto','reaberto']).limit(100));
-      queries.push(db.collection('chamados').where('status','==','em_tratamento').where('operadorTratamentoId','==',state.user.uid).limit(100));
+      queries.push(db.collection('chamados').where('operadorTratamentoId','==',state.user.uid).limit(100));
     } else if (state.profile.papel === 'usuario' && state.profile.organizacaoId) {
       queries.push(db.collection('chamados').where('organizacaoId','==',state.profile.organizacaoId).where('solicitantesIds','array-contains',state.user.uid).where('status','in',['aberto','reaberto','em_tratamento','informacoes_divergentes','devolver_recusar','finalizado']).limit(100));
     }
     for (const q of queries) {
       let first = true;
       const unsub = q.onSnapshot((snap) => {
-        if (!first && !snap.metadata.hasPendingWrites) {
+        if (!first && !snap.metadata.fromCache && !snap.metadata.hasPendingWrites) {
           snap.docChanges().forEach((change) => {
             if (change.type === 'removed') return;
             const ticket = { id: change.doc.id, ...change.doc.data() };
@@ -1401,7 +1415,10 @@
           });
         }
         first = false;
-      }, (error) => console.warn('[Xabuia] Avisos não puderam iniciar; confira os índices/regras:', error));
+      }, (error) => {
+        console.warn('[Xabuia] Avisos não puderam iniciar; confira os índices/regras:', error);
+        showToast('Xabuia: não foi possível monitorar os retornos. Confira índices/permissões do Firestore no Console.', 'error');
+      });
       noticeTM.unsubs.push(unsub);
     }
   }
@@ -1417,11 +1434,12 @@
       startTmNotices();
     } else stopTmNotices();
     noticeTM.count = 0;
+    noticeTM.lastAlertsByKey.clear();
     document.querySelectorAll('.xabuia-notice-card').forEach((el) => el.classList.remove('xabuia-notice-card'));
     ensureTmNoticeControl();
   }
   function refreshTmNotificationsForUser() {
-    stopTmNotices(); noticeTM.count = 0; noticeTM.alertKeys.clear();
+    stopTmNotices(); noticeTM.count = 0; noticeTM.alertKeys.clear(); noticeTM.lastAlertsByKey.clear(); noticeTM.statusBuckets.clear(); noticeTM.statusByKey.clear();
     noticeTM.enabled = !!state.user && localStorage.getItem(tmNotifKey()) === '1';
     ensureTmNoticeControl();
     if (noticeTM.enabled) startTmNotices();
