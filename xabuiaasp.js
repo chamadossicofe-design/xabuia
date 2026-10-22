@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xabuia • Infradesk → Firestore manual econômico
 // @namespace    xabuia/infradesk
-// @version      3.2.15
+// @version      3.2.16
 // @description  Xabuia Infradesk compatível com outros aplicativos Firebase na mesma página, login híbrido e modo econômico.
 // @author       Xabuia
 // @match        https://*.infradesk.app/backend/chamados/painel*
@@ -31,7 +31,7 @@
   /********************************************************************
    * CONFIGURAÇÕES
    ********************************************************************/
-  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.15-email-alertas-blin';
+  const XABUIA_VERSION = window.__XABUIA_REMOTE_VERSION || '3.2.16-correcao-som-infradesk';
   const XABUIA_ICON_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuia.png';
   const XABUIA_BLIN_URL = 'https://chamadossicofe-design.github.io/xabuia/blin.mp3';
   const XABUIA_UPDATE_URL = 'https://chamadossicofe-design.github.io/xabuia/xabuiaasp.js';
@@ -749,9 +749,11 @@
       .xabuia-notice-control{position:fixed;bottom:18px;right:18px;z-index:999998;border:1px solid #c7d2fe;border-radius:16px;padding:10px 12px;box-shadow:0 8px 28px rgba(15,23,42,.22);background:#eef2ff;color:#1e40af;font:800 12px system-ui;cursor:pointer}
       .xabuia-notice-control.is-on{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
       .xabuia-notice-control.has-new{background:#fef3c7;border-color:#f59e0b;color:#92400e}
+      .xabuia-notice-test{position:fixed;right:18px;bottom:65px;z-index:999998;border:1px solid #c7d2fe;border-radius:12px;padding:7px 10px;background:#fff;color:#1e40af;box-shadow:0 8px 20px rgba(15,23,42,.12);font:700 11px system-ui;cursor:pointer}
+      .xabuia-notice-test:focus-visible{outline:3px solid #155eef;outline-offset:2px}
       .xabuia-notice-card{outline:3px solid #f59e0b!important;outline-offset:1px;box-shadow:0 0 0 5px rgba(245,158,11,.16)!important}
       .xabuia-notice-new{border-left:5px solid #f59e0b!important}
-      .xabuia-notice-pop{position:fixed;right:18px;bottom:78px;width:min(390px,calc(100vw - 36px));background:#111827;color:#fff;z-index:999999;padding:13px 16px;border-radius:14px;box-shadow:0 14px 38px rgba(0,0,0,.22);font:13px system-ui}
+      .xabuia-notice-pop{position:fixed;right:18px;bottom:109px;width:min(390px,calc(100vw - 36px));background:#111827;color:#fff;z-index:999999;padding:13px 16px;border-radius:14px;box-shadow:0 14px 38px rgba(0,0,0,.22);font:13px system-ui}
     `;
     document.head.appendChild(style);
   }
@@ -1288,7 +1290,12 @@
   /********************************************************************
    * AVISOS XABUIA NO INFRADESK (opt-in; sem mexer nas notificações nativas)
    ********************************************************************/
-  const noticeTM = { unsubs: [], initialized: false, enabled: false, audio: null, count: 0, alertKeys: new Set(), seen: new Map(), lastAlertsByKey: new Map(), statusByKey: new Map(), statusBuckets: new Map() };
+  const noticeTM = {
+    unsubs: [], initialized: false, enabled: false, audio: null,
+    audioReady: false, audioError: '', audioAttempt: null, soundOwnerUid: '', lastSoundWarning: 0,
+    count: 0, alertKeys: new Set(), seen: new Map(), lastAlertsByKey: new Map(),
+    statusByKey: new Map(), statusBuckets: new Map()
+  };
   function tmNotifKey() { return `xabuia_tamper_avisos_v1_${state.user?.uid || 'anon'}`; }
   function tmEventAt(ticket) {
     const date = ticket?.ultimaOcorrenciaEm || ticket?.atualizadoEm;
@@ -1304,6 +1311,15 @@
     noticeTM.unsubs.forEach((fn) => { try { fn(); } catch (_) {} });
     noticeTM.unsubs = []; noticeTM.initialized = false;
   }
+  function tmAudioErrorMessage(error) {
+    const name = String(error?.name || '');
+    const mediaErrorCode = noticeTM.audio?.error?.code || 0;
+    if (name === 'NotAllowedError') return 'O Chrome bloqueou a reprodução automática nesta página. Clique em “🔊 Testar som” para liberar.';
+    if (name === 'NotSupportedError' || mediaErrorCode === 4) return 'O blin.mp3 não pôde ser carregado ou foi bloqueado pelo InfraDesk (verifique Console → CSP/media-src).';
+    if (mediaErrorCode === 2) return 'Erro de rede ao buscar blin.mp3 no GitHub Pages.';
+    if (mediaErrorCode === 3) return 'O navegador não conseguiu decodificar blin.mp3.';
+    return String(error?.message || 'O navegador não conseguiu reproduzir o blin.mp3.');
+  }
   function ensureTmNoticeControl() {
     let button = document.getElementById('xabuia-notification-toggle');
     if (!button) {
@@ -1313,38 +1329,98 @@
       button.addEventListener('click', toggleTmNotices);
       document.body.appendChild(button);
     }
-    button.style.display = state.user && state.profile?.ativo !== false ? '' : 'none';
+    const show = !!(state.user && state.profile?.ativo !== false);
+    button.style.display = show ? '' : 'none';
     button.classList.toggle('is-on', noticeTM.enabled);
     button.classList.toggle('has-new', noticeTM.count > 0);
-    button.textContent = `🔔 Xabuia ${noticeTM.enabled ? 'som ligado' : 'ativar avisos'}${noticeTM.count ? ' • ' + noticeTM.count : ''}`;
+    // Não chamar "som ligado" somente porque um valor ficou salvo no localStorage.
+    const caption = !noticeTM.enabled ? 'ativar avisos'
+      : noticeTM.audioReady ? 'som ligado'
+      : 'avisos ativos · testar som';
+    button.textContent = `🔔 Xabuia ${caption}${noticeTM.count ? ' • ' + noticeTM.count : ''}`;
+    button.title = noticeTM.audioError || 'O alerta é individual, conforme as consultas autorizadas no Firestore.';
+
+    // Teste independente do toggle: não interrompe os ouvintes de novas ocorrências.
+    let test = document.getElementById('xabuia-notification-sound-test');
+    if (!test) {
+      test = document.createElement('button');
+      test.type = 'button'; test.id = 'xabuia-notification-sound-test';
+      test.className = 'xabuia-notice-test';
+      test.textContent = '🔊 Testar som';
+      test.title = 'Reproduzir blin.mp3 para verificar permissão de áudio do InfraDesk';
+      test.addEventListener('click', async () => {
+        const ok = await unlockTmSound();
+        if (ok) showToast('🔊 blin.mp3 reproduzido no InfraDesk!', 'success');
+        else showToast(noticeTM.audioError || 'Falha no blin.mp3. Consulte o Console (F12).', 'error');
+      });
+      document.body.appendChild(test);
+    }
+    test.style.display = show && noticeTM.enabled ? '' : 'none';
   }
   function tmSoundElement() {
     if (!noticeTM.audio) {
-      noticeTM.audio = new Audio(XABUIA_BLIN_URL);
-      noticeTM.audio.preload = 'auto';
-      noticeTM.audio.volume = 0.8;
+      const audio = new Audio(XABUIA_BLIN_URL);
+      audio.preload = 'auto';
+      audio.volume = 0.8;
+      audio.loop = false;
+      // Um erro de mídia costuma ser causado por URL inacessível ou CSP do site hospedeiro.
+      audio.addEventListener('error', () => {
+        const code = audio.error?.code || 0;
+        console.warn(`[Xabuia Som] Erro carregando blin.mp3 (MediaError ${code}) no InfraDesk. Cheque Content-Security-Policy/media-src: ${XABUIA_BLIN_URL}`);
+      });
+      noticeTM.audio = audio;
     }
     return noticeTM.audio;
   }
+  function tmSoundFailed(error, source = 'aviso') {
+    noticeTM.audioReady = false;
+    noticeTM.audioError = tmAudioErrorMessage(error);
+    console.warn(`[Xabuia Som] ${source}: ${noticeTM.audioError}`, error, { src: XABUIA_BLIN_URL, mediaError: noticeTM.audio?.error?.code || 0 });
+    ensureTmNoticeControl();
+    if (source === 'aviso' && Date.now() - noticeTM.lastSoundWarning > 60000) {
+      noticeTM.lastSoundWarning = Date.now();
+      showToast(`Aviso Xabuia recebido, mas sem som. ${noticeTM.audioError}`, 'error');
+    }
+  }
+  function tmSoundSucceeded() {
+    noticeTM.audioReady = true;
+    noticeTM.audioError = '';
+    ensureTmNoticeControl();
+  }
   async function unlockTmSound() {
-    // Chamado pelo clique em 'ativar avisos'; serve como teste do blin.mp3.
+    // É obrigatório iniciar audio.play() DURANTE o clique do usuário.
     const audio = tmSoundElement();
+    if (noticeTM.audioAttempt) return noticeTM.audioAttempt;
     try {
-      audio.pause(); audio.currentTime = 0;
-      await audio.play();
-      return true;
+      audio.pause();
+      if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) audio.currentTime = 0;
+      const playResult = audio.play();
+      noticeTM.audioAttempt = Promise.resolve(playResult).then(() => {
+        tmSoundSucceeded();
+        return true;
+      }).catch((error) => {
+        tmSoundFailed(error, 'teste');
+        return false;
+      }).finally(() => { noticeTM.audioAttempt = null; });
+      return noticeTM.audioAttempt;
     } catch (error) {
-      console.warn('[Xabuia] Falha ao tocar blin.mp3 no InfraDesk:', error);
+      tmSoundFailed(error, 'teste');
       return false;
     }
   }
   function playTmNotice() {
     if (!noticeTM.enabled) return;
     const audio = tmSoundElement();
+    if (noticeTM.audioAttempt) return;
     try {
-      audio.pause(); audio.currentTime = 0;
-      void audio.play().catch((error) => console.warn('[Xabuia] blin.mp3 não tocou:', error));
-    } catch (error) { console.warn('[Xabuia] Falha de áudio:', error); }
+      audio.pause();
+      if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) audio.currentTime = 0;
+      noticeTM.audioAttempt = Promise.resolve(audio.play()).then(() => {
+        tmSoundSucceeded();
+      }).catch((error) => {
+        tmSoundFailed(error, 'aviso');
+      }).finally(() => { noticeTM.audioAttempt = null; });
+    } catch (error) { tmSoundFailed(error, 'aviso'); }
   }
   function rebuildTmStatusMap() {
     noticeTM.statusByKey.clear();
@@ -1430,15 +1506,26 @@
       if ('Notification' in window && Notification.permission === 'default') {
         try { await Notification.requestPermission(); } catch (_) {}
       }
-      if (!(await soundTest)) showToast('Alertas visuais ativos, mas não consegui tocar blin.mp3. Confira o arquivo e a permissão de áudio do navegador.', 'error');
+      if (!(await soundTest)) showToast(noticeTM.audioError || 'Avisos visuais ativados, porém o navegador bloqueou blin.mp3.', 'error');
       startTmNotices();
-    } else stopTmNotices();
+    } else {
+      stopTmNotices();
+      noticeTM.audioReady = false;
+      noticeTM.audioError = '';
+      try { noticeTM.audio?.pause(); } catch (_) {}
+    }
     noticeTM.count = 0;
     noticeTM.lastAlertsByKey.clear();
     document.querySelectorAll('.xabuia-notice-card').forEach((el) => el.classList.remove('xabuia-notice-card'));
     ensureTmNoticeControl();
   }
   function refreshTmNotificationsForUser() {
+    const activeUid = state.user?.uid || '';
+    if (noticeTM.soundOwnerUid !== activeUid) {
+      noticeTM.audioReady = false;
+      noticeTM.audioError = '';
+      noticeTM.soundOwnerUid = activeUid;
+    }
     stopTmNotices(); noticeTM.count = 0; noticeTM.alertKeys.clear(); noticeTM.lastAlertsByKey.clear(); noticeTM.statusBuckets.clear(); noticeTM.statusByKey.clear();
     noticeTM.enabled = !!state.user && localStorage.getItem(tmNotifKey()) === '1';
     ensureTmNoticeControl();
