@@ -8,6 +8,10 @@ import {
   signInWithRedirect,
   getRedirectResult,
   GoogleAuthProvider,
+  EmailAuthProvider,
+  linkWithCredential,
+  updatePassword,
+  reload,
   sendPasswordResetEmail,
   updateProfile,
   signOut
@@ -47,7 +51,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V35-comercial-fila-cronologica-TESTE';
+const APP_VERSION = 'V35.1-interface-comercial-login-duplo-TESTE';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -183,6 +187,13 @@ const els = {
   newTicketBtn: $('newTicketBtn'),
   adminBtn: $('adminBtn'),
   logoutBtn: $('logoutBtn'),
+  myAccountBtn: $('myAccountBtn'),
+  myAccountDialog: $('myAccountDialog'),
+  accountEmailValue: $('accountEmailValue'),
+  accountPasswordForm: $('accountPasswordForm'),
+  accountPasswordInput: $('accountPasswordInput'),
+  accountPasswordConfirmInput: $('accountPasswordConfirmInput'),
+  saveAccountPasswordBtn: $('saveAccountPasswordBtn'),
   adminQueryActiveBtn: $('adminQueryActiveBtn'),
   adminClearQueryBtn: $('adminClearQueryBtn'),
   searchInput: $('searchInput'),
@@ -3998,7 +4009,7 @@ async function submitAuth(event) {
         } catch (_) {
           setAuthMode('login');
           els.passwordInput.focus();
-          showToast('Esse e-mail já tem cadastro. Mudei para Entrar. Se a conta foi criada pelo Google, use o botão Google; se quer senha, clique em Definir ou recuperar senha.', 'error');
+          showToast('Esse e-mail já está cadastrado. Entre com Google e configure sua senha em Minha conta, sem criar outro usuário.', 'error');
         }
       }
     } else {
@@ -4021,6 +4032,93 @@ async function loginWithGoogle() {
   }
 }
 
+/**
+ * V35.1: vincula uma senha ao MESMO UID do Firebase Authentication.
+ * Não cria outra conta; não escreve em usuarios/chamados; não grava senha no navegador.
+ * O usuário precisa primeiro autenticar-se (por exemplo, via Google).
+ */
+async function openMyAccount() {
+  const user = auth.currentUser;
+  if (!user || !state.profile || state.profile.ativo === false) {
+    return showToast('Entre na sua conta antes de configurar uma senha.', 'error');
+  }
+
+  if (els.accountEmailValue) els.accountEmailValue.textContent = user.email || 'E-mail indisponível';
+  els.accountPasswordForm?.reset();
+  try {
+    await reload(user); // atualiza os provedores, sem consultar o Firestore
+    if (auth.currentUser?.uid !== user.uid) return;
+  } catch (_) {
+    // Exibição do formulário não depende da consulta opcional ao estado do provedor.
+  }
+  els.myAccountDialog?.showModal();
+}
+
+async function saveMyAccountPassword(event) {
+  event.preventDefault();
+  const user = auth.currentUser;
+  if (!user || user.uid !== state.user?.uid || state.profile?.ativo === false) {
+    return showToast('Sessão indisponível. Entre novamente e tente outra vez.', 'error');
+  }
+
+  const email = String(user.email || '').trim();
+  const password = els.accountPasswordInput?.value || '';
+  const confirm = els.accountPasswordConfirmInput?.value || '';
+
+  if (!validXabuiaEmail(email)) return showToast('Sua conta não possui um e-mail válido.', 'error');
+  if (password.length < 8) return showToast('A senha do Xabuia deve ter pelo menos 8 caracteres.', 'error');
+  if (password !== confirm) return showToast('A confirmação da senha está diferente.', 'error');
+
+  const button = els.saveAccountPasswordBtn;
+  if (button?.disabled) return;
+  if (button) { button.disabled = true; button.textContent = 'Salvando...'; }
+
+  try {
+    // O Auth vincula o método ao usuário já logado, preservando o UID.
+    // Se o método senha já estava vinculado, apenas atualizamos a senha.
+    await reload(user);
+    if (auth.currentUser?.uid !== user.uid) throw new Error('A sessão mudou. Entre novamente.');
+    const hasPasswordProvider = user.providerData?.some((item) => item.providerId === 'password');
+    if (hasPasswordProvider) {
+      await updatePassword(user, password);
+    } else {
+      try {
+        const credential = EmailAuthProvider.credential(email, password);
+        const result = await linkWithCredential(user, credential);
+        if (result.user.uid !== user.uid) throw new Error('A conta vinculada não corresponde à sessão original.');
+      } catch (error) {
+        if (error?.code === 'auth/provider-already-linked') {
+          await updatePassword(user, password);
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    els.accountPasswordForm?.reset();
+    els.myAccountDialog?.close();
+    showToast('Senha do Xabuia configurada! Agora você pode entrar com Google OU com e-mail e essa senha.', 'success');
+  } catch (error) {
+    const code = error?.code || '';
+    const friendly = {
+      'auth/requires-recent-login': 'Por segurança, saia e entre novamente pelo Google. Depois acesse Minha conta e defina a senha.',
+      'auth/email-already-in-use': 'Este e-mail já pertence a outra conta de autenticação. Não criei uma conta duplicada; procure o administrador.',
+      'auth/credential-already-in-use': 'Essas credenciais já estão vinculadas a outra conta. Nenhum dado foi migrado. Consulte o administrador.',
+      'auth/weak-password': 'Senha muito fraca. Escolha uma senha mais forte.',
+      'auth/password-does-not-meet-requirements': 'A senha não atende aos requisitos configurados no Firebase.',
+      'auth/operation-not-allowed': 'Ative E-mail/Senha em Firebase Console > Authentication > Método de login.',
+      'auth/user-token-expired': 'Sua sessão expirou. Entre novamente pelo Google e repita.',
+      'auth/network-request-failed': 'Não consegui conectar ao Firebase. Confira a internet e tente novamente.'
+    }[code];
+    showToast(friendly || authErrorMessage(error), 'error');
+  } finally {
+    // Nunca persistir nem registrar a senha em logs, estado de app ou Firestore.
+    if (els.accountPasswordInput) els.accountPasswordInput.value = '';
+    if (els.accountPasswordConfirmInput) els.accountPasswordConfirmInput.value = '';
+    if (button) { button.disabled = false; button.textContent = 'Salvar senha'; }
+  }
+}
+
 async function resetPassword() {
   const email = normalizeKey(els.emailInput.value);
   if (!validXabuiaEmail(email)) {
@@ -4030,7 +4128,7 @@ async function resetPassword() {
 
   try {
     await sendPasswordResetEmail(auth, email);
-    showToast('Enviei o link para definir/recuperar a senha. Confira seu e-mail.', 'success');
+    showToast('Se o endereço tiver senha cadastrada, você poderá redefini-la pelo e-mail. Quem usa só Google deve entrar com Google e acessar Minha conta.', 'success');
   } catch (error) {
     showToast(authErrorMessage(error), 'error');
   }
@@ -4039,11 +4137,11 @@ async function resetPassword() {
 function authErrorMessage(error) {
   const code = error?.code || '';
   const map = {
-    'auth/invalid-credential': 'E-mail ou senha inválidos. Se essa conta foi criada pelo Google, use Entrar/Criar com Google; senha local não é criada automaticamente.',
+    'auth/invalid-credential': 'E-mail ou senha inválidos. Se você usa Google, entre pelo Google e crie sua senha em Minha conta.',
     'auth/invalid-email': 'E-mail inválido. Informe o endereço completo, como nome@empresa.com.br.',
-    'auth/wrong-password': 'Senha inválida. Se essa conta foi criada pelo Google, use Entrar/Criar com Google.',
+    'auth/wrong-password': 'Senha inválida. Entre com Google e configure a senha em Minha conta.',
     'auth/user-not-found': 'Não encontrei esse e-mail. Crie a conta ou entre com Google.',
-    'auth/email-already-in-use': 'Este e-mail já possui cadastro. Clique em Entrar, use o botão Google se foi criado pelo Gmail, ou recupere/defina a senha por e-mail.',
+    'auth/email-already-in-use': 'Este e-mail já possui cadastro. Entre com Google e configure sua senha em Minha conta, ou use Entrar com uma senha existente.',
     'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.',
     'auth/popup-closed-by-user': 'Login com Google cancelado.',
     'auth/popup-blocked': 'O navegador bloqueou a janela do Google. Vou tentar pelo redirecionamento.',
@@ -4346,6 +4444,8 @@ onAuthStateChanged(auth, async (user) => {
   updateNoticeButton();
 
   if (!user) {
+    els.myAccountDialog?.close();
+    els.accountPasswordForm?.reset();
     showOnly(els.authView);
     return;
   }
@@ -4405,6 +4505,8 @@ els.xabuiaSoundBtn?.addEventListener('click', toggleXabuiaSound);
 els.xabuiaAlertsBtn?.addEventListener('click', showMyNotices);
 els.googleBtn.addEventListener('click', loginWithGoogle);
 els.resetPasswordBtn.addEventListener('click', resetPassword);
+els.myAccountBtn?.addEventListener('click', openMyAccount);
+els.accountPasswordForm?.addEventListener('submit', saveMyAccountPassword);
 els.logoutBtn.addEventListener('click', logout);
 els.logoutOnboardingBtn.addEventListener('click', logout);
 els.logoutBlockedBtn.addEventListener('click', logout);
