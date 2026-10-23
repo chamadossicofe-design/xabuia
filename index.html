@@ -10,10 +10,10 @@
   <link rel="shortcut icon" type="image/png" href="./xabuia.png?v=1" />
   <link rel="apple-touch-icon" href="./xabuia.png?v=1" />
 
-  <link rel="stylesheet" href="./styles.css?v=35.0-teste" />
+  <link rel="stylesheet" href="./styles.css?v=35.1-conta-dupla" />
 </head>
 
-<body class="xabuia-v30 xabuia-v35">
+<body class="xabuia-v30 xabuia-v35 xabuia-v351">
   <div id="toast" class="toast hidden"></div>
 
   <main id="authView" class="auth-shell hidden">
@@ -55,7 +55,8 @@
         <span class="google-g">G</span> Entrar/Criar com Google
       </button>
 
-      <button id="resetPasswordBtn" class="btn link-btn" type="button">Definir ou recuperar senha por e-mail</button>
+      <button id="resetPasswordBtn" class="btn link-btn" type="button">Esqueci minha senha</button>
+      <p class="auth-password-hint">Usa Google e quer entrar também com senha? Entre com Google e depois abra <strong>Minha conta</strong> para cadastrar uma senha do Xabuia.</p>
 
       <div id="connectionHelp" class="notice hidden"></div>
 
@@ -120,9 +121,37 @@
         <button id="adminBtn" class="btn ghost hidden" type="button">Admin</button>
         <button id="xabuiaSoundBtn" class="btn ghost" type="button">🔊 Ativar som</button>
         <button id="xabuiaAlertsBtn" class="btn ghost" type="button">🔔 Avisos <strong id="xabuiaUnreadCount">0</strong></button>
+        <button id="myAccountBtn" class="btn ghost" type="button">Minha conta</button>
         <button id="logoutBtn" class="btn ghost" type="button">Sair</button>
       </div>
     </header>
+
+    <dialog id="myAccountDialog" class="modal" aria-labelledby="myAccountTitle">
+      <form id="accountPasswordForm" class="modal-card account-password-modal">
+        <div class="section-head">
+          <h2 id="myAccountTitle">Minha conta · Senha do Xabuia</h2>
+          <button type="button" class="icon-btn" data-close-dialog="myAccountDialog" aria-label="Fechar">×</button>
+        </div>
+        <p class="muted">Você pode continuar entrando com Google e também cadastrar uma senha própria para este mesmo usuário. Nenhum chamado ou permissão será alterado.</p>
+        <div class="account-email-box">
+          <span>E-mail da conta</span>
+          <strong id="accountEmailValue">—</strong>
+        </div>
+        <label class="field">
+          <span>Nova senha do Xabuia</span>
+          <input id="accountPasswordInput" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="Mínimo de 8 caracteres" />
+        </label>
+        <label class="field">
+          <span>Confirmar nova senha</span>
+          <input id="accountPasswordConfirmInput" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="Repita a nova senha" />
+        </label>
+        <p class="muted account-password-note">Essa senha não é a do Gmail. Ela será associada ao seu usuário atual no Firebase Authentication. Para alterá-la, pode ser necessário entrar novamente por segurança.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-close-dialog="myAccountDialog">Cancelar</button>
+          <button id="saveAccountPasswordBtn" type="submit" class="btn primary">Salvar senha</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="xabuiaAlertsDialog" class="modal">
       <div class="modal-card">
@@ -499,7 +528,7 @@
     </div>
   </dialog>
 
-  <script type="module" src="./app.js?v=35.0-teste"></script>
+  <script type="module" src="./app.js?v=35.1-conta-dupla"></script>
   <script src="./xabuia-title-alertas.js"></script>
 </body>
 </html>

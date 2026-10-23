@@ -3277,3 +3277,24 @@ body.xabuia-v35 .modal .modal-card {max-height:calc(100dvh - 30px);overflow-y:au
 @media (max-width:1320px) {body.xabuia-v35 .summary-grid {grid-template-columns:repeat(auto-fit,minmax(125px,1fr));}}
 @media (max-width:850px) {body.xabuia-v35 .topbar {position:static;}body.xabuia-v35 .xabuia-table-wrap {max-height:65vh;}body.xabuia-v35 .toolbar .field {min-width:165px;}body.xabuia-v35 .top-actions .btn {flex:0 1 auto;}}
 @media (max-width:560px) {body.xabuia-v35 .app {padding:7px;}body.xabuia-v35 .summary-grid {grid-template-columns:repeat(2,minmax(0,1fr));}body.xabuia-v35 .toolbar .field,body.xabuia-v35 .toolbar .field.search-field {flex:1 1 100%;min-width:0;}body.xabuia-v35 .top-actions .btn {flex:1 1 auto;}body.xabuia-v35 .xabuia-detail-dialog {width:calc(100vw - 12px);}body.xabuia-v35 #ticketDetail {padding:9px;}}
+
+/* V35.1 - Minha conta / credenciais de email e senha vinculadas ao Google */
+.auth-password-hint {
+  text-align: center;
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.4;
+  margin: 8px 0 2px;
+}
+.account-password-modal { gap: 13px; }
+.account-email-box {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.account-email-box span { color: var(--muted); font-size: .75rem; font-weight: 700; }
+.account-email-box strong { font-size: .91rem; overflow-wrap: anywhere; }
+.account-password-note { margin: 0; font-size: .76rem; line-height: 1.35; }
