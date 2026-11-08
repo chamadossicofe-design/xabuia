@@ -3298,3 +3298,16 @@ body.xabuia-v35 .modal .modal-card {max-height:calc(100dvh - 30px);overflow-y:au
 .account-email-box span { color: var(--muted); font-size: .75rem; font-weight: 700; }
 .account-email-box strong { font-size: .91rem; overflow-wrap: anywhere; }
 .account-password-note { margin: 0; font-size: .76rem; line-height: 1.35; }
+
+/* V35.2 - reservas visíveis para todos os operadores, com confirmação na abertura */
+body.xabuia-v35 .xabuia-tickets-table tr.xabuia-reserved-by-other td:first-child { box-shadow: inset 3px 0 #d97706; }
+body.xabuia-v35 .xabuia-tickets-table tr.xabuia-reserved-by-other .table-reserve strong { color: #92400e; }
+.xabuia-reservation-dialog { width: min(520px, calc(100vw - 30px)); max-width: 520px; }
+.xabuia-reservation-dialog .modal-card { padding: 24px; }
+.xabuia-reservation-dialog .section-head { margin-bottom: 10px; }
+.xabuia-reservation-dialog .section-head h2 { font-size: 1.1rem; }
+.xabuia-reservation-dialog p { margin: 8px 0; line-height: 1.5; }
+.xabuia-reservation-dialog .xabuia-reservation-reference { padding: 8px 10px; border-radius: 8px; background: #f1f5f9; overflow-wrap: anywhere; }
+.xabuia-reservation-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.xabuia-reservation-actions button { min-width: 118px; }
+@media (max-width: 520px) { .xabuia-reservation-actions button { flex: 1 1 100%; } }

@@ -23,6 +23,7 @@ import {
   addDoc,
   setDoc,
   getDoc,
+  getDocFromServer,
   getDocs,
   updateDoc,
   writeBatch,
@@ -51,7 +52,7 @@ const firebaseConfig = {
   appId: '1:81395419196:web:8322d61652f6240b49db39'
 };
 
-const APP_VERSION = 'V35.1-interface-comercial-login-duplo-TESTE';
+const APP_VERSION = 'V35.2-fila-visivel-reservas-compartilhadas-TESTE';
 const BOOTSTRAP_ADMIN_EMAIL = 'chamadossicofe@gmail.com';
 
 const TICKET_TYPE_LABELS = {
@@ -95,7 +96,6 @@ const STATUS_LABELS = {
 const ACTIVE_STATUSES = ['aberto', 'reaberto', 'em_tratamento'];
 const CLOSED_STATUSES = ['finalizado', 'informacoes_divergentes', 'devolver_recusar'];
 const ALL_TICKET_STATUSES = [...ACTIVE_STATUSES, ...CLOSED_STATUSES];
-const LIVE_OPEN_LIMIT = 250;
 const LIVE_TREATMENT_LIMIT = 250;
 const ADMIN_ACTIVE_QUERY_LIMIT_PER_STATUS = 200;
 const ADMIN_FILTERED_QUERY_LIMIT_PER_STATUS = 300;
@@ -282,7 +282,10 @@ const state = {
   pendingProductFile: null,
   pendingProductFiles: [],
   ticketBuckets: {},
+  failedTicketBuckets: new Map(),
+  ticketBucketFromCache: new Map(),
   optimisticReservations: new Map(),
+  confirmedForeignTicketOwners: new Map(),
   unsubTickets: null,
   unsubOrgs: null,
   unsubUsers: null,
@@ -1396,15 +1399,22 @@ function stopTicketsListener() {
   }
   state.unsubTickets = null;
   state.ticketBuckets = {};
+  state.failedTicketBuckets.clear();
+  state.ticketBucketFromCache.clear();
   state.optimisticReservations.clear();
+  state.confirmedForeignTicketOwners.clear();
 }
 
 function mergeTicketBuckets() {
   try {
     const byId = new Map();
-    Object.values(state.ticketBuckets).flat().forEach((ticket) => {
-      if (ticket?.id) byId.set(ticket.id, ticket);
-    });
+    // Documentos da fila ativa compartilhada prevalecem sobre consultas
+    // auxiliares, que podem chegar com um snapshot antigo de uma reserva.
+    Object.entries(state.ticketBuckets)
+      .sort(([a], [b]) => Number(a === 'fila_ativa_compartilhada') - Number(b === 'fila_ativa_compartilhada'))
+      .forEach(([, tickets]) => tickets.forEach((ticket) => {
+        if (ticket?.id) byId.set(ticket.id, ticket);
+      }));
     // A remoção do listener dos "livres" pode chegar antes da inclusão em "meus atribuídos".
     // Mantém a linha do próprio operador sem consultas ou writes extras.
     const now = Date.now();
@@ -1426,7 +1436,16 @@ function mergeTicketBuckets() {
     }
     state.tickets = [...byId.values()];
     renderTickets();
-    setText(els.liveStatus, 'Ao vivo');
+    if (state.failedTicketBuckets.size) {
+      setText(els.liveStatus, '⚠ Fila incompleta');
+      if (els.liveStatus) els.liveStatus.title = 'Uma consulta ao Firestore falhou. Nem todos os chamados podem estar visíveis.';
+    } else if ([...state.ticketBucketFromCache.values()].some(Boolean)) {
+      setText(els.liveStatus, 'Dados em cache');
+      if (els.liveStatus) els.liveStatus.title = 'Sem confirmação atual do servidor. A lista pode estar desatualizada.';
+    } else {
+      setText(els.liveStatus, 'Ao vivo');
+      if (els.liveStatus) els.liveStatus.title = 'Consultas da fila atualizadas pelo Firestore.';
+    }
   } catch (error) {
     console.error('Erro ao renderizar chamados:', error);
     setText(els.liveStatus, 'Erro');
@@ -1572,10 +1591,14 @@ function listenTicketBucket(name, q) {
       });
     }
     initialSnapshot = false;
+    state.failedTicketBuckets.delete(name);
+    state.ticketBucketFromCache.set(name, snapshot.metadata.fromCache);
     state.ticketBuckets[name] = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
     mergeTicketBuckets();
   }, (error) => {
-    setText(els.liveStatus, 'Erro');
+    state.failedTicketBuckets.set(name, String(error?.message || 'Erro no Firestore'));
+    setText(els.liveStatus, '⚠ Fila incompleta');
+    if (els.liveStatus) els.liveStatus.title = `Falha na consulta ${name}. A fila exibida pode estar incompleta.`;
     if (String(error?.message || '').includes('requires an index')) {
       showToast('O Firestore pediu um índice composto. Esta versão evita os índices compostos principais; confira se atualizou todos os arquivos e recarregou com Ctrl + F5.', 'error');
       return;
@@ -1599,22 +1622,20 @@ function startTicketsListener() {
     return;
   }
 
-  // Operador acompanha ao vivo só a fila aberta/reaberta + os próprios em tratamento.
-  // Usuário comum acompanha somente chamados onde ele está em solicitantesIds.
+  // Operador: uma única consulta para TODOS os chamados ativos, sem limite arbitrário.
+  // Chamados reservados por colegas não somem da fila, nem dependem de duas
+  // consultas competindo entre si quando o status muda.
+  // A segunda consulta mantém os retornos dos MEUS chamados encerrados (alertas).
+  // Atenção: o Firestore precisa autorizar operadores a ler todos os ativos.
   if (isOperator()) {
     state.unsubTickets = [
       listenTicketBucket(
-        'fila_aberta_reaberta',
-        query(chamadosRef, where('status', 'in', ['aberto', 'reaberto']), limit(LIVE_OPEN_LIMIT))
+        'fila_ativa_compartilhada',
+        query(chamadosRef, where('status', 'in', ACTIVE_STATUSES))
       ),
       listenTicketBucket(
         'meus_atribuidos',
-        query(
-          chamadosRef,
-          // Inclui finalizados/devolvidos, para receber o último retorno ao sair de "em tratamento".
-          where('operadorTratamentoId', '==', state.user.uid),
-          limit(LIVE_TREATMENT_LIMIT)
-        )
+        query(chamadosRef, where('operadorTratamentoId', '==', state.user.uid), limit(LIVE_TREATMENT_LIMIT))
       )
     ];
     return;
@@ -1991,10 +2012,6 @@ function filteredTickets() {
     if (status === 'ativos' && !ACTIVE_STATUSES.includes(ticketStatus)) return false;
     if (status !== 'todos' && status !== 'ativos' && ticketStatus !== status) return false;
 
-    // Operadores só acompanham os próprios tratamentos na fila operacional.
-    // Evita que consultas de busca/filtros tragam reservas de outras pessoas.
-    if (isOperator() && ticketStatus === 'em_tratamento' && ticket.operadorTratamentoId !== state.user?.uid) return false;
-
     if (!allTypes && !typeValues.includes(ticketTipo)) return false;
 
     if (isOperatorOrAdmin() && !allOrgs && !orgValues.includes(ticket.organizacaoId)) {
@@ -2035,7 +2052,7 @@ function ticketTableRowHtml(ticket) {
   const unread = state.notifications.some((n) => n.ticketId === ticket.id && !n.lida);
   const reservedByMe = status === 'em_tratamento' && ticket.operadorTratamentoId === state.user?.uid;
   const reserveText = status === 'em_tratamento'
-    ? `<strong>${escapeHtml(ticket.operadorTratamentoNome || 'Em tratamento')}</strong><small class="muted">${reservedByMe ? 'Reservado por você' : 'Responsável'}</small>`
+    ? `<strong>${escapeHtml(ticket.operadorTratamentoNome || ticket.operadorTratamentoEmail || 'Operador não informado')}</strong><small class="muted">${reservedByMe ? 'Reservado por você' : 'Reservado por outro operador'}</small>`
     : `<span class="muted">—</span><small class="muted">Disponível</small>`;
   const title = escapeHtml(ticketTitle(ticket));
   const reference = escapeHtml(ticketRawLine(ticket));
@@ -2093,7 +2110,9 @@ function renderTickets() {
       }
       const selected = ticket.id === state.selectedTicketId;
       const unread = state.notifications.some((n) => n.ticketId === ticket.id && !n.lida);
-      row.className = `xabuia-table-row ${selected ? 'selected' : ''} ${unread ? 'xabuia-unread-ticket' : ''}`;
+      const foreignReservation = isOperator() && ticket.status === 'em_tratamento'
+        && ticket.operadorTratamentoId !== state.user?.uid;
+      row.className = `xabuia-table-row ${selected ? 'selected' : ''} ${unread ? 'xabuia-unread-ticket' : ''} ${foreignReservation ? 'xabuia-reserved-by-other' : ''}`;
       const signature = JSON.stringify([
         ticket.status, ticket.tipoChamado, ticket.chave, ticket.codigoProduto,
         ticket.organizacaoNome, ticket.criadoPorNome, ticket.criadoPorEmail,
@@ -2114,6 +2133,12 @@ function renderTickets() {
   if (detailDialog?.open && selected) {
     const liveStatus = $('detailLiveStatus');
     if (liveStatus) liveStatus.innerHTML = statusBadge(selected.status);
+    const assignmentLive = $('detailReservationLive');
+    if (assignmentLive) {
+      const owner = selected.operadorTratamentoNome || selected.operadorTratamentoEmail || 'Operador não informado';
+      assignmentLive.textContent = selected.status === 'em_tratamento' ? `Tratando: ${owner}` : '';
+      assignmentLive.classList.toggle('hidden', selected.status !== 'em_tratamento');
+    }
     // Não reconstruir o painel: preserva a resposta que o operador está digitando.
   }
   if (state.selectedTicketId && !selected) {
@@ -2123,19 +2148,81 @@ function renderTickets() {
   }
 }
 
-async function selectTicket(ticketId) {
-  const ticket = state.tickets.find((t) => t.id === ticketId);
-  if (!ticket) return showToast('Chamado não está disponível na lista atual.', 'error');
-  state.selectedTicketId = ticketId;
-  state.historyLoadedFor = null;
-  renderTickets();
-  const dialog = $('ticketDetailDialog');
-  if (dialog && !dialog.open) dialog.showModal();
-  const title = $('detailModalTitle');
+function requiresForeignReservationWarning(ticket) {
+  return isOperator() && ticket?.status === 'em_tratamento'
+    && ticket.operadorTratamentoId !== state.user?.uid;
+}
+
+function confirmForeignReservation(ticket) {
+  const dialog = $('reservedTicketDialog');
+  if (!dialog) throw new Error('O modal de confirmação da reserva não está disponível. Atualize o index.html.');
+  const ownerName = ticket.operadorTratamentoNome || ticket.operadorTratamentoEmail || 'Operador não identificado';
+  const owner = $('reservedTicketOwner');
+  const title = $('reservedTicketReference');
+  if (owner) owner.textContent = ownerName;
   if (title) title.textContent = ticketTitle(ticket);
-  const statusBox = $('detailLiveStatus');
-  if (statusBox) statusBox.innerHTML = statusBadge(ticket.status);
-  await renderTicketDetail(ticket);
+  dialog.returnValue = 'cancel';
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'continue'), { once: true });
+    dialog.showModal();
+  });
+}
+
+// O operador confere no SERVIDOR a reserva antes de abrir, evitando cache antigo.
+// Nunca transferimos a reserva apenas por abrir um chamado.
+async function selectTicket(ticketId) {
+  if (selectTicket.opening) return;
+  if (!state.tickets.some((ticket) => ticket.id === ticketId)) {
+    return showToast('Chamado não está disponível na lista atual.', 'error');
+  }
+  selectTicket.opening = true;
+  try {
+    const ticketRef = doc(db, 'chamados', ticketId);
+    let ticket = state.tickets.find((item) => item.id === ticketId);
+    let snap;
+    // A verificação adicional é necessária para operadores (reservas em disputa).
+    // Não altera o fluxo existente de usuários comuns e administradores.
+    if (isOperator()) {
+      snap = await getDocFromServer(ticketRef);
+      if (!snap.exists()) throw new Error('Chamado não encontrado no servidor.');
+      ticket = { id: snap.id, ...snap.data() };
+    }
+
+    state.confirmedForeignTicketOwners.delete(ticketId);
+    if (requiresForeignReservationWarning(ticket)) {
+      const confirmedOwner = ticket.operadorTratamentoId;
+      if (!(await confirmForeignReservation(ticket))) return;
+      // A reserva pode mudar enquanto a pessoa está lendo a confirmação.
+      snap = await getDocFromServer(ticketRef);
+      if (!snap.exists()) throw new Error('Chamado não encontrado no servidor.');
+      ticket = { id: snap.id, ...snap.data() };
+      if (ticket.status !== 'em_tratamento' || ticket.operadorTratamentoId !== confirmedOwner) {
+        throw new Error('A reserva deste chamado mudou durante a confirmação. Clique em Abrir novamente.');
+      }
+      state.confirmedForeignTicketOwners.set(ticketId, confirmedOwner);
+    }
+
+    state.selectedTicketId = ticketId;
+    state.historyLoadedFor = null;
+    // Atualiza a linha imediatamente, até o listener receber a próxima alteração.
+    state.tickets = state.tickets.map((item) => item.id === ticketId ? ticket : item);
+    renderTickets();
+    const dialog = $('ticketDetailDialog');
+    if (dialog && !dialog.open) dialog.showModal();
+    const title = $('detailModalTitle');
+    if (title) title.textContent = ticketTitle(ticket);
+    const statusBox = $('detailLiveStatus');
+    if (statusBox) statusBox.innerHTML = statusBadge(ticket.status);
+    await renderTicketDetail(ticket);
+  } catch (error) {
+    console.error('Erro ao abrir chamado:', error);
+    const message = error?.code === 'permission-denied'
+      ? 'O Firestore bloqueou a leitura. Verifique as regras para operadores.'
+      : error?.message || 'Não foi possível verificar a reserva.';
+    showToast(`Não foi possível abrir: ${message}`, 'error');
+  } finally {
+    selectTicket.opening = false;
+  }
 }
 
 
@@ -2151,9 +2238,8 @@ async function renderTicketDetail(ticket) {
 
   const tipo = ticket.tipoChamado || 'nota_fiscal';
   const status = ticket.status || 'aberto';
-  const assignedLine = ticket.status === 'em_tratamento' && ticket.operadorTratamentoNome
-    ? `<span class="detail-assigned-chip">Tratando: <strong>${escapeHtml(ticket.operadorTratamentoNome)}</strong></span>`
-    : '';
+  const owner = ticket.operadorTratamentoNome || ticket.operadorTratamentoEmail || 'Operador não informado';
+  const assignedLine = `<span id="detailReservationLive" class="detail-assigned-chip ${ticket.status === 'em_tratamento' ? '' : 'hidden'}">${ticket.status === 'em_tratamento' ? `Tratando: ${escapeHtml(owner)}` : ''}</span>`;
 
   els.ticketDetail.className = 'card detail-card detail-card-v30';
   els.ticketDetail.innerHTML = `
@@ -2661,31 +2747,34 @@ async function addHistory(ticket) {
     };
 
     let previousForEvents = ticket;
-    if (statusChanged) {
-      await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(ticketRef);
-        if (!snap.exists()) throw new Error('Chamado não encontrado.');
-        const current = { id: snap.id, ...snap.data() };
-        const serverStatus = current.status || 'aberto';
-        if (serverStatus !== currentStatus) {
-          throw new Error('O status mudou em outra sessão. Feche e abra o chamado novamente.');
-        }
-        if (serverStatus === 'em_tratamento' && current.operadorTratamentoId &&
-            current.operadorTratamentoId !== state.user?.uid && !isAdmin()) {
-          throw new Error('Chamado reservado por outro operador.');
-        }
-        if (selectedStatus === 'em_tratamento' && !['aberto', 'reaberto', 'em_tratamento'].includes(serverStatus)) {
-          throw new Error('Não é possível reservar um chamado encerrado.');
-        }
-        previousForEvents = current;
-        transaction.update(ticketRef, updatePayload);
-        transaction.set(doc(collection(db, 'chamados', ticketId, 'historico')), historyPayload(textoFinal, historyType, anexo ? { anexo } : {}));
-      });
-    } else {
+    // Usuários solicitantes mantêm o comportamento original de adicionar observações.
+    // Operadores e admins validam a reserva numa transação, inclusive sem mudar status.
+    if (!isOperatorOrAdmin() && !statusChanged) {
       const batch = writeBatch(db);
       batch.update(ticketRef, updatePayload);
       batch.set(doc(collection(db, 'chamados', ticketId, 'historico')), historyPayload(textoFinal, historyType, anexo ? { anexo } : {}));
       await batch.commit();
+    } else {
+      await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(ticketRef);
+      if (!snap.exists()) throw new Error('Chamado não encontrado.');
+      const current = { id: snap.id, ...snap.data() };
+      const serverStatus = current.status || 'aberto';
+      if (serverStatus !== currentStatus) {
+        throw new Error('O status mudou em outra sessão. Feche e abra o chamado novamente.');
+      }
+      if (serverStatus === 'em_tratamento' && current.operadorTratamentoId &&
+          current.operadorTratamentoId !== state.user?.uid && !isAdmin() &&
+          state.confirmedForeignTicketOwners.get(ticketId) !== current.operadorTratamentoId) {
+        throw new Error('A reserva mudou. Abra novamente e confirme o responsável antes de continuar.');
+      }
+      if (selectedStatus === 'em_tratamento' && !['aberto', 'reaberto', 'em_tratamento'].includes(serverStatus)) {
+        throw new Error('Não é possível reservar um chamado encerrado.');
+      }
+      previousForEvents = current;
+      transaction.update(ticketRef, updatePayload);
+      transaction.set(doc(collection(db, 'chamados', ticketId, 'historico')), historyPayload(textoFinal, historyType, anexo ? { anexo } : {}));
+      });
     }
 
     let eventWarning = '';
@@ -4597,7 +4686,10 @@ document.addEventListener('click', (event) => {
   });
 
   const closeId = event.target?.dataset?.closeDialog;
-  if (closeId) $(closeId)?.close();
+  if (closeId) {
+    $(closeId)?.close();
+    if (closeId === 'ticketDetailDialog') state.confirmedForeignTicketOwners.clear();
+  }
 
   const reserveButton = event.target.closest?.('[data-reserve-ticket-id]');
   if (reserveButton) {

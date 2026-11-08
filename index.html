@@ -10,7 +10,7 @@
   <link rel="shortcut icon" type="image/png" href="./xabuia.png?v=1" />
   <link rel="apple-touch-icon" href="./xabuia.png?v=1" />
 
-  <link rel="stylesheet" href="./styles.css?v=35.1-conta-dupla" />
+  <link rel="stylesheet" href="./styles.css?v=35.2-fila-compartilhada" />
 </head>
 
 <body class="xabuia-v30 xabuia-v35 xabuia-v351">
@@ -270,6 +270,20 @@
 
 
 
+  <!-- Confirmação explícita: consultar não transfere a reserva do colega. -->
+  <dialog id="reservedTicketDialog" class="modal xabuia-reservation-dialog" aria-labelledby="reservedTicketDialogTitle">
+    <div class="modal-card">
+      <div class="section-head"><h2 id="reservedTicketDialogTitle">Chamado reservado por outro operador</h2></div>
+      <p>Este chamado já está sendo atendido por <strong id="reservedTicketOwner"></strong>.</p>
+      <p class="xabuia-reservation-reference" id="reservedTicketReference"></p>
+      <p class="muted">Deseja continuar? Você poderá consultar e registrar a tratativa, mas abrir não transfere a reserva. Qualquer alteração de status será registrada com seu usuário. Se a reserva mudar, será necessário confirmar novamente.</p>
+      <form method="dialog" class="xabuia-reservation-actions">
+        <button class="btn ghost" type="submit" value="cancel">Não, voltar</button>
+        <button class="btn primary" type="submit" value="continue">Sim, continuar</button>
+      </form>
+    </div>
+  </dialog>
+
   <dialog id="ticketDetailDialog" class="modal wide xabuia-detail-dialog" aria-labelledby="detailModalTitle">
     <div class="xabuia-detail-shell">
       <div class="xabuia-detail-modal-head">
@@ -528,7 +542,7 @@
     </div>
   </dialog>
 
-  <script type="module" src="./app.js?v=35.1-conta-dupla"></script>
+  <script type="module" src="./app.js?v=35.2-fila-compartilhada"></script>
   <script src="./xabuia-title-alertas.js"></script>
 </body>
 </html>
