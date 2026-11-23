@@ -1689,3 +1689,55 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
 })();
+
+// ============================================================================
+// xabuiaasp.js — MODULO_KANBAN_CONTROLES_VISUAIS_V1
+// Regras visuais de botões do Kanban InfraDesk. Independente do Xabuia original.
+// Somente CSS: não remove elementos, não altera eventos, não intercepta requisições.
+// Escopo limitado a listas Kanban com status nativo 2 e 3.
+// Para desativar: remover este bloco inteiro do fim do arquivo.
+// ============================================================================
+;(function moduloKanbanControlesVisuaisV1() {
+  'use strict';
+
+  const ID_ESTILO = 'xabuia-kanban-controles-visuais-v1';
+
+  function instalarEstilo() {
+    if (document.getElementById(ID_ESTILO)) return;
+    if (!document.head) return;
+
+    const estilo = document.createElement('style');
+    estilo.id = ID_ESTILO;
+    estilo.textContent = `
+      /* ABERTO (status 2): manter somente Capturar (joinha) e Anexos.
+         Não modificar tamanhos, margens ou o layout nativo do InfraDesk. */
+      ul.list-status-chamados[data-status-id="2"] > li.chamado-item > .list-toolbar > :not(.toolbar-atendente) {
+        display: none !important;
+      }
+      ul.list-status-chamados[data-status-id="2"] > li.chamado-item > .list-toolbar > .toolbar-atendente > :not(.btn-capturar):not(.btn-anexo) {
+        display: none !important;
+      }
+
+      /* EM LIBERAÇÃO (status 3): manter avatar do atendente e Anexos.
+         O avatar nativo é o DIV filho direto da barra contendo .avatar-user-card. */
+      ul.list-status-chamados[data-status-id="3"] > li.chamado-item > .list-toolbar > :not(.toolbar-atendente):not(:has(> .avatar-user-card)) {
+        display: none !important;
+      }
+      ul.list-status-chamados[data-status-id="3"] > li.chamado-item > .list-toolbar > .toolbar-atendente > :not(.btn-anexo) {
+        display: none !important;
+      }
+
+      /* EM ANÁLISE TERCEIRO (status 6): nenhuma restrição.
+         REABERTO/FINALIZADO e outras listas: nenhuma restrição. */
+    `;
+
+    document.head.appendChild(estilo);
+    console.info('[Xabuia Kanban] Controles visuais v1 ativos: Aberto (capturar/anexos), Em liberação (avatar/anexos), Terceiro (livre).');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', instalarEstilo, { once: true });
+  } else {
+    instalarEstilo();
+  }
+})();
