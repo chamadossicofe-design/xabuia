@@ -1751,3 +1751,142 @@
     instalarEstilo();
   }
 })();
+
+
+// ============================================================================
+// xabuiaasp.js — MODULO_INTERACAO_STATUS_TERCEIRO_V1
+// Na aba "+ Interação", quando o status atual do chamado for Aberto (2) ou
+// Em liberação (3), fixa "Status da Solicitação" em Em Análise Terceiro (6).
+// Não altera o campo Status da aba Geral nem interfere no Xabuia original.
+// O select permanece visível e bloqueado. Um input hidden garante que o valor
+// 6 seja enviado pelo formulário, mesmo com o select HTML desabilitado.
+// Atenção: restrição de interface; autorização real depende do servidor.
+// Para desativar: remover este bloco inteiro do fim do arquivo.
+// ============================================================================
+;(function moduloInteracaoStatusTerceiroV1() {
+  'use strict';
+
+  const MODULO = '[Xabuia Interação]';
+  const STATUS_TERCEIRO = '6';
+  const STATUS_RESTRITOS = new Set(['2', '3']);
+  const ATTR_ORIGEM = 'data-xabuia-interacao-status-origem';
+  const ATTR_TRAVA = 'data-xabuia-interacao-status-travado';
+  const ATTR_INICIALIZADO = 'data-xabuia-interacao-status-inicializado';
+  const INPUT_MARCADOR = 'data-xabuia-status-interacao-hidden';
+  const FORM_SELECTOR = '#Modalv .modal-body.modal-detalhes form#form-interacao';
+  const SELECT_SELECTOR = 'select#status-chamado-id[name="status_chamado_id"]';
+
+  function encontrarStatusAtual(form, select) {
+    const modal = form.closest('#Modalv');
+    const geral = modal?.querySelector('#geral select[name="status_chamado_id"]');
+    if (geral && geral.value) return String(geral.value);
+
+    // Reserva: localizar o cartão do próprio chamado no Kanban, se disponível.
+    const id = form.getAttribute('data-chamado-id');
+    if (id && /^\d+$/.test(id)) {
+      const card = document.querySelector('li.chamado-item[data-chamado-id="' + id + '"]');
+      const coluna = card?.closest('ul.list-status-chamados[data-status-id]');
+      if (coluna) return String(coluna.getAttribute('data-status-id'));
+    }
+    return String(select.value || '');
+  }
+
+  function manterStatusTerceiro(form) {
+    if (form.getAttribute(ATTR_TRAVA) !== '1') return;
+    const select = form.querySelector(SELECT_SELECTOR);
+    if (!select) return;
+    if (select.value !== STATUS_TERCEIRO) select.value = STATUS_TERCEIRO;
+    if (!select.disabled) select.disabled = true;
+
+    let hidden = form.querySelector('input[' + INPUT_MARCADOR + ']');
+    if (!hidden) {
+      hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.name = 'status_chamado_id';
+      hidden.setAttribute(INPUT_MARCADOR, '1');
+      select.insertAdjacentElement('afterend', hidden);
+    }
+    hidden.value = STATUS_TERCEIRO;
+  }
+
+  function aplicar() {
+    const form = document.querySelector(FORM_SELECTOR);
+    if (!form) return;
+    const select = form.querySelector(SELECT_SELECTOR);
+    if (!select) return;
+
+    let origem = form.getAttribute(ATTR_ORIGEM);
+    if (!origem) {
+      origem = encontrarStatusAtual(form, select);
+      if (!origem) return;
+      form.setAttribute(ATTR_ORIGEM, origem);
+    }
+
+    // Apenas quando foi aberto de Aberto ou Em liberação. Ao abrir um chamado
+    // já em Análise Terceiro, Reaberto etc., comportamento nativo é preservado.
+    if (!STATUS_RESTRITOS.has(origem)) return;
+    if (!select.querySelector('option[value="6"]')) {
+      console.warn(MODULO, 'Opção Em Análise Terceiro (6) ausente; campo não modificado.');
+      return;
+    }
+
+    const primeiraVez = form.getAttribute(ATTR_INICIALIZADO) !== '1';
+    form.setAttribute(ATTR_TRAVA, '1');
+    if (primeiraVez) {
+      form.setAttribute(ATTR_INICIALIZADO, '1');
+      select.value = STATUS_TERCEIRO;
+      // Equivale à seleção manual de Em Análise Terceiro, mantendo o handler
+      // nativo onChangeStatusFeedback do InfraDesk e eventuais dependências.
+      try {
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      } catch (erro) {
+        console.warn(MODULO, 'Não foi possível avisar a tela da seleção do status 6:', erro);
+      }
+      select.title = 'Status fixo: Em Análise Terceiro';
+      select.setAttribute('aria-disabled', 'true');
+      console.info(MODULO, 'Status da Solicitação fixado em Em Análise Terceiro (6); origem:', origem);
+    }
+    manterStatusTerceiro(form);
+  }
+
+  // Executa antes dos handlers do InfraDesk em tentativas de alterar o select
+  // ou enviar o formulário. O campo de Status da aba Geral não é afetado.
+  document.addEventListener('change', function (evento) {
+    const select = evento.target;
+    if (!(select instanceof HTMLSelectElement) || !select.matches(SELECT_SELECTOR)) return;
+    const form = select.closest(FORM_SELECTOR);
+    if (!form || form.getAttribute(ATTR_TRAVA) !== '1') return;
+    if (select.value !== STATUS_TERCEIRO) {
+      manterStatusTerceiro(form);
+      evento.stopImmediatePropagation();
+    }
+  }, true);
+
+  document.addEventListener('submit', function (evento) {
+    const form = evento.target;
+    if (!(form instanceof HTMLFormElement) || !form.matches(FORM_SELECTOR)) return;
+    aplicar();
+    manterStatusTerceiro(form);
+    // Não bloquear o submit: o botão "Gravar e Notificar" segue nativo.
+  }, true);
+
+  // O InfraDesk substitui o conteúdo do #Modalv por AJAX. MutationObserver
+  // reaplica a regra às novas instâncias, sem interferir nos demais modais.
+  const observador = new MutationObserver(function () {
+    aplicar();
+  });
+
+  function iniciar() {
+    aplicar();
+    observador.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', iniciar, { once: true });
+  } else {
+    iniciar();
+  }
+})();
